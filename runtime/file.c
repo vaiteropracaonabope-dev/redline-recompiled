@@ -560,6 +560,7 @@ static uint32_t k_NtFlushBuffersFile(X86Ctx *c, const uint32_t *a) {
 static FILETIME filetime_from_unix_seconds(int64_t seconds) {
     FILETIME result;
     ULARGE_INTEGER ticks;
+    if (!seconds) { result.dwLowDateTime = result.dwHighDateTime = 0; return result; }
     ticks.QuadPart = ((uint64_t)(seconds + 11644473600ll)) * 10000000ull;
     result.dwLowDateTime = ticks.LowPart;
     result.dwHighDateTime = ticks.HighPart;
@@ -768,16 +769,6 @@ static int directory_mask_match(const char *mask, const char *name) {
     }
     while (*mask == '*') mask++;
     return *mask == 0;
-}
-
-static FILETIME filetime_from_unix_seconds(int64_t seconds) {
-    FILETIME result;
-    ULARGE_INTEGER ticks;
-    /* FILETIME counts 100-ns intervals since 1601-01-01; Unix time starts in 1970. */
-    ticks.QuadPart = ((uint64_t)(seconds + 11644473600ll)) * 10000000ull;
-    result.dwLowDateTime = ticks.LowPart;
-    result.dwHighDateTime = ticks.HighPart;
-    return result;
 }
 
 static uint32_t k_NtQueryDirectoryFile(X86Ctx *c, const uint32_t *a) {
