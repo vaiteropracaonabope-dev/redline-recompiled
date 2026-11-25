@@ -24,6 +24,7 @@ jobs:
           CC="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang"
           "$CC" --version
           "$CC" -std=c11 -Wall -Wextra -Werror -Iruntime -fsyntax-only tests/arm64_cpu_compile.c
+          "$CC" -std=c11 -Wall -Wextra -Werror -Iruntime -fsyntax-only tests/dispatcher_objects.c
           "$CC" -std=c11 -Wall -Wextra -Werror -Iruntime -fsyntax-only runtime/host_fs_posix.c tests/host_fs_posix.c
           "$CC" -std=c11 -Wall -Wextra -Werror -Iruntime -fsyntax-only runtime/file.c
           "$CC" -std=c11 -Wall -Wextra -Wno-unused-parameter -Werror -Iruntime -fsyntax-only runtime/thread.c
@@ -37,11 +38,14 @@ jobs:
       - name: Compile ARM64 CPU runtime test
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iruntime tests/arm64_cpu_compile.c -o /tmp/arm64-cpu-test
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iruntime tests/dispatcher_objects.c -o /tmp/dispatcher-objects-test
           cc -std=c11 -O2 -Wall -Wextra -Werror -pthread -Iruntime runtime/host_fs_posix.c tests/host_fs_posix.c -o /tmp/host-fs-test
           cc -std=c11 -O2 -Wall -Wextra -Werror -pthread -Iruntime runtime/host_sync_posix.c tests/host_sync_posix.c -o /tmp/host-sync-test
           cc -std=c11 -O2 -Wall -Wextra -Werror -pthread -Iruntime runtime/host_sync_posix.c runtime/host_thread_posix.c tests/host_thread_posix.c -o /tmp/host-thread-test
       - name: Run ARM64 CPU runtime test
         run: /tmp/arm64-cpu-test
+      - name: Run dispatcher object semantics test
+        run: /tmp/dispatcher-objects-test
       - name: Run POSIX filesystem test
         run: /tmp/host-fs-test
       - name: Run POSIX synchronization test
@@ -57,6 +61,8 @@ jobs:
       - name: Compile Windows filesystem backend
         shell: cmd
         run: |
+          cl /nologo /W3 /WX /Iruntime tests\dispatcher_objects.c /Fe:dispatcher-objects-test.exe
+          dispatcher-objects-test.exe
           cl /nologo /W3 /WX /c /Iruntime runtime\host_fs_win32.c /Fo:host-fs-backend.obj
           cl /nologo /W3 /WX /c /Iruntime tests\host_fs_win32.c /Fo:host-fs-test.obj
           cl /nologo /W3 /WX host-fs-backend.obj host-fs-test.obj /Fe:host-fs-win32-test.exe
