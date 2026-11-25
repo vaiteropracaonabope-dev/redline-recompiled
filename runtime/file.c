@@ -614,7 +614,7 @@ static uint32_t k_NtSetInformationFile(X86Ctx *c, const uint32_t *a) {
             t[i].dwHighDateTime = (DWORD)(v >> 32);
             p[i] = v && v != ~0ull ? &t[i] : NULL;
         }
-        if (f->h != INVALID_HANDLE_VALUE && (p[0] || p[1] || p[2]) && !SetFileTime((HANDLE)(intptr_t)f->h, p[0], p[1], p[2]) && ktrace())
+        if (f->h != (RedlineFsHandle)-1 && (p[0] || p[1] || p[2]) && !SetFileTime((HANDLE)(intptr_t)f->h, p[0], p[1], p[2]) && ktrace())
             fprintf(stderr, "[file] SetFileTime on %s failed (%lu)\n", f->guest, GetLastError());
         break;
     }
