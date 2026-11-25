@@ -12,8 +12,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Android NDK
+      - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
       - name: Install pinned NDK
         run: sdkmanager "ndk;27.2.12479018"
       - name: Compile ARM64 CPU compatibility smoke test
