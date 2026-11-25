@@ -25,6 +25,7 @@ jobs:
           "$CC" --version
           "$CC" -std=c11 -Wall -Wextra -Werror -Iruntime -fsyntax-only tests/arm64_cpu_compile.c
           "$CC" -std=c11 -Wall -Wextra -Werror -Iruntime -fsyntax-only tests/dispatcher_objects.c
+          "$CC" -std=c11 -Wall -Wextra -Werror -Iruntime -fsyntax-only tests/guest_handle_table.c
           "$CC" -std=c11 -Wall -Wextra -Werror -Iruntime -fsyntax-only runtime/host_fs_posix.c tests/host_fs_posix.c
           "$CC" -std=c11 -Wall -Wextra -Werror -Iruntime -fsyntax-only runtime/file.c
           "$CC" -std=c11 -Wall -Wextra -Wno-unused-parameter -Werror -Iruntime -fsyntax-only runtime/thread.c
@@ -39,6 +40,7 @@ jobs:
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iruntime tests/arm64_cpu_compile.c -o /tmp/arm64-cpu-test
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iruntime tests/dispatcher_objects.c -o /tmp/dispatcher-objects-test
+          cc -std=c11 -O2 -Wall -Wextra -Werror -Iruntime tests/guest_handle_table.c -o /tmp/guest-handle-table-test
           cc -std=c11 -O2 -Wall -Wextra -Werror -pthread -Iruntime runtime/host_fs_posix.c tests/host_fs_posix.c -o /tmp/host-fs-test
           cc -std=c11 -O2 -Wall -Wextra -Werror -pthread -Iruntime runtime/host_sync_posix.c tests/host_sync_posix.c -o /tmp/host-sync-test
           cc -std=c11 -O2 -Wall -Wextra -Werror -pthread -Iruntime runtime/host_sync_posix.c runtime/host_thread_posix.c tests/host_thread_posix.c -o /tmp/host-thread-test
@@ -46,6 +48,8 @@ jobs:
         run: /tmp/arm64-cpu-test
       - name: Run dispatcher object semantics test
         run: /tmp/dispatcher-objects-test
+      - name: Run generation-tagged guest handle table test
+        run: /tmp/guest-handle-table-test
       - name: Run POSIX filesystem test
         run: /tmp/host-fs-test
       - name: Run POSIX synchronization test
