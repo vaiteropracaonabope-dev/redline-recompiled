@@ -1,21 +1,19 @@
-# Android APK build scaffold
+# Android APK and native bridge
 
-This branch now contains a minimal Android Gradle application so CI can produce and verify a real installable debug APK.
+The Android app includes a Forza-inspired setup screen, device diagnostics, a folder picker for a user-provided game dump, saved graphics preferences, and a link to the latest GitHub Actions APK artifact.
 
 ## Build
 
-The GitHub Actions workflow `.github/workflows/android-apk.yml` runs:
+The `.github/workflows/android-apk.yml` workflow installs Android SDK 35, NDK 27.2.12479018 and CMake 3.22.1, then runs `gradle assembleDebug`. The APK is uploaded as `redline-android-debug-apk`.
 
-```sh
-gradle assembleDebug
-```
+## Native bridge status
 
-The APK is uploaded as the `redline-android-debug-apk` workflow artifact.
+The APK now packages `libredline_android.so` for `arm64-v8a`. The JNI/NDK bridge confirms that native code is loaded inside Android. This is an integration foundation, **not the Forza game runtime**.
 
-## Important status
+The desktop runtime still depends on Windows APIs and Direct3D 11. The Android guest execution path, memory mapping, Xbox HLE integration, Vulkan/OpenGL renderer, audio, input and boot flow remain unported and unvalidated. Graphics preferences in the UI are saved only; they do not alter rendering yet.
 
-This is a **development shell APK only**. It confirms the Android application packaging/build pipeline. It does not run Redline Recompiled, does not include the Xbox game, and is not a playable Forza build.
+## Game files and downloads
 
-The current desktop runtime still depends on Windows APIs and Direct3D 11. The Android runtime, graphics backend, audio/input integration, guest-memory integration, and game boot path must be ported before this shell can launch the game.
+No copyrighted Forza game data is hosted or included. The folder picker only checks for the expected top-level `Forza.xbe` and `media` entries in files supplied by the user. The in-app download button opens the project's GitHub Actions page, where the debug APK artifact can be downloaded. Artifacts expire after 14 days.
 
-No copyrighted game data is included. Use only game files supplied by the user in a future compatible runtime.
+Use only game files you are legally entitled to use.
