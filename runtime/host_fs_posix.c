@@ -79,6 +79,12 @@ int redline_fs_sync(RedlineFsHandle handle) {
     return fsync((int)handle);
 }
 
+uint64_t redline_fs_monotonic_ns(void) {
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now)) return 0;
+    return (uint64_t)now.tv_sec * 1000000000ull + (uint64_t)now.tv_nsec;
+}
+
 int redline_fs_stat(const char *path, RedlineFsInfo *info) {
     struct stat st;
     if (!info) {
