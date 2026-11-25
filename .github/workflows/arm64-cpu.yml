@@ -1,0 +1,24 @@
+name: ARM64 CPU compatibility
+
+on:
+  push:
+    branches: [android-port]
+  pull_request:
+    branches: [android-port]
+  workflow_dispatch:
+
+jobs:
+  arm64-header-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Android NDK
+        uses: android-actions/setup-android@v3
+      - name: Install pinned NDK
+        run: sdkmanager "ndk;27.2.12479018"
+      - name: Compile ARM64 CPU compatibility smoke test
+        run: |
+          NDK="$ANDROID_HOME/ndk/27.2.12479018"
+          CC="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android26-clang"
+          "$CC" --version
+          "$CC" -std=c11 -Wall -Wextra -Werror -Iruntime -fsyntax-only tests/arm64_cpu_compile.c
