@@ -22,7 +22,8 @@ void redline_sync_wake_all(const volatile int32_t *value) { WakeByAddressAll((PV
 uint64_t redline_sync_monotonic_ns(void) {
     LARGE_INTEGER now, frequency;
     if (!QueryPerformanceFrequency(&frequency) || !QueryPerformanceCounter(&now)) return 0;
-    return (uint64_t)((now.QuadPart * 1000000000ull) / (uint64_t)frequency.QuadPart);
+    return (uint64_t)(now.QuadPart / frequency.QuadPart) * 1000000000ull +
+           (uint64_t)(now.QuadPart % frequency.QuadPart) * 1000000000ull / (uint64_t)frequency.QuadPart;
 }
 uint64_t redline_sync_realtime_100ns(void) {
     FILETIME ft;
@@ -30,7 +31,7 @@ uint64_t redline_sync_realtime_100ns(void) {
     GetSystemTimeAsFileTime(&ft);
     value.LowPart = ft.dwLowDateTime;
     value.HighPart = ft.dwHighDateTime;
-    return value.QuadPart;
+    return value.QuadPart - 116444736000000000ull;
 }
 void redline_sync_sleep_ms(uint32_t milliseconds) { Sleep((DWORD)milliseconds); }
 void redline_sync_yield(void) { SwitchToThread(); }
