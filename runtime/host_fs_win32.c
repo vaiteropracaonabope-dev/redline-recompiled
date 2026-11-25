@@ -160,11 +160,35 @@ int redline_fs_stat(const char *path, RedlineFsInfo *info) {
         return -1;
     }
     info->size = ((uint64_t)data.nFileSizeHigh << 32) | data.nFileSizeLow;
+    info->created_seconds = redline_fs_filetime_seconds(data.ftCreationTime);
+    info->accessed_seconds = redline_fs_filetime_seconds(data.ftLastAccessTime);
     info->modified_seconds = redline_fs_filetime_seconds(data.ftLastWriteTime);
     info->modified_nanoseconds = 0;
     info->mode = data.dwFileAttributes;
     info->is_directory = !!(data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY);
     return 0;
+}
+
+static FILETIME redline_fs_to_filetime(const RedlineFsTime *time) {
+    ULARGE_INTEGER ticks;
+    FILETIME result;
+    ticks.QuadPart = ((uint64_t)(time->seconds + 11644473600ll)) * 10000000ull +
+                     time->nanoseconds / 100u;
+    result.dwLowDateTime = ticks.LowPart;
+    result.dwHighDateTime = ticks.HighPart;
+    return result;
+}
+
+int redline_fs_set_times(RedlineFsHandle handle, const RedlineFsTime *created,
+                         const RedlineFsTime *accessed, const RedlineFsTime *modified) {
+    FILETIME c, a, m;
+    if (created) c = redline_fs_to_filetime(created);
+    if (accessed) a = redline_fs_to_filetime(accessed);
+    if (modified) m = redline_fs_to_filetime(modified);
+    if (SetFileTime((HANDLE)(intptr_t)handle, created ? &c : NULL,
+                    accessed ? &a : NULL, modified ? &m : NULL)) return 0;
+    redline_fs_set_errno();
+    return -1;
 }
 
 int redline_fs_mkdir(const char *path, unsigned mode) {
