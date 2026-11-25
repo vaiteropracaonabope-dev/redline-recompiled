@@ -143,4 +143,4 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] The next successful waiter acquires an abandoned mutant and receives `STATUS_ABANDONED_WAIT_0` (or the matching index for wait-any); wait-all returns the abandoned status after acquiring all requested objects.
 - [x] Extend pure dispatcher tests for recursive owner exit, abandonment state, next-thread acquisition, and clearing the abandoned flag.
 - [ ] Full runtime tests with actual guest thread exit, wait-any/wait-all races, and mutant lifetime/handle references remain pending. The registry is intentionally bounded because dispatcher objects are not yet reference-counted or reclaimed.
-- [ ] Await Android NDK, native ARM64, and Windows CI for this change.
+- [x] Android NDK compile, native ARM64 runtime tests, and Windows MSVC checks passed in workflow run 45526294099 (all three jobs successful).
