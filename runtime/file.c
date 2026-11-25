@@ -34,7 +34,7 @@
 typedef struct {
     uint32_t obj;
     RedlineFsHandle h;
-    HANDLE find; /* directory enumeration state remains Windows-specific for now */
+    RedlineFsDirHandle find; /* zero means no active directory scan */
     int is_dir;
     int unbuffered;   /* opened with FILE_NO_INTERMEDIATE_BUFFERING: whole-sector writes */
     int has_eof;      /* end of file as the title last set it (or found at open) ... */
@@ -426,7 +426,7 @@ static uint32_t open_file(X86Ctx *c, uint32_t out_handle, uint32_t access, uint3
     M32(fs_ctx) = dev == 1 ? i + 1 : is_dir;
     M32(fs_ctx + 0x1C) = i + 1;
     M32(obj + 8) = fs_ctx;
-    g_files[i] = (HFile){obj, h, INVALID_HANDLE_VALUE, is_dir};
+    g_files[i] = (HFile){obj, h, 0, is_dir};
     RedlineFsInfo opened_info;
     if ((options & 8) && !is_dir && !redline_fs_stat(host, &opened_info)) /* FILE_NO_INTERMEDIATE_BUFFERING */
         g_files[i].unbuffered = 1, g_files[i].has_eof = 1, g_files[i].eof = (int64_t)opened_info.size;
@@ -452,7 +452,7 @@ int file_close(uint32_t handle) {
     HFile *f = file_of(handle);
     if (!f) return 0;
     if (f->h != (RedlineFsHandle)-1) redline_fs_close(f->h);
-    if (f->find != INVALID_HANDLE_VALUE) FindClose(f->find);
+    if (f->find) redline_fs_dir_close(f->find);
     memset(f, 0, sizeof *f);
     M8(handle) = 0;
     return 1;
@@ -735,44 +735,88 @@ static uint32_t k_IoQueryVolumeInformation(X86Ctx *c, const uint32_t *a) {
     return st;
 }
 
+/* Case-insensitive DOS-style wildcard matching used by NtQueryDirectoryFile. */
+static int directory_mask_match(const char *mask, const char *name) {
+    const char *star = NULL, *retry = NULL;
+    while (*name) {
+        if (*mask == '?' || tolower((unsigned char)*mask) == tolower((unsigned char)*name)) {
+            mask++;
+            name++;
+        } else if (*mask == '*') {
+            star = mask++;
+            retry = name;
+        } else if (star) {
+            mask = star + 1;
+            name = ++retry;
+        } else {
+            return 0;
+        }
+    }
+    while (*mask == '*') mask++;
+    return *mask == 0;
+}
+
+static FILETIME filetime_from_unix_seconds(int64_t seconds) {
+    FILETIME result;
+    ULARGE_INTEGER ticks;
+    /* FILETIME counts 100-ns intervals since 1601-01-01; Unix time starts in 1970. */
+    ticks.QuadPart = ((uint64_t)(seconds + 11644473600ll)) * 10000000ull;
+    result.dwLowDateTime = ticks.LowPart;
+    result.dwHighDateTime = ticks.HighPart;
+    return result;
+}
+
 static uint32_t k_NtQueryDirectoryFile(X86Ctx *c, const uint32_t *a) {
-    /* (FileHandle, Event, ApcRoutine, ApcContext, IoStatusBlock, FileInformation, Length, FileInformationClass,
-     *  FileMask (ANSI_STRING*), RestartScan) -- one FILE_DIRECTORY_INFORMATION entry per call, ANSI name */
+    /* One FILE_DIRECTORY_INFORMATION entry per call; directory scanning is host-neutral. */
     HFile *f = file_of(a[0]);
     if (!f || !f->is_dir) return STATUS_INVALID_HANDLE;
-    WIN32_FIND_DATAA fd;
-    BOOL ok;
+
     int restart = (uint8_t)a[9];
-    do {
-        if (f->find == INVALID_HANDLE_VALUE || restart) { /* restart once, then step past "." and ".." */
-            restart = 0;
-            char mask[GPATH] = "*", pattern[MAX_PATH];
-            if (a[8] && M16(a[8])) ansi_read(a[8], mask, sizeof mask);
-            if (f->find != INVALID_HANDLE_VALUE) FindClose(f->find);
-            snprintf(pattern, sizeof pattern, "%s\\%s", f->host, mask);
-            f->find = FindFirstFileA(pattern, &fd);
-            ok = f->find != INVALID_HANDLE_VALUE;
-        } else {
-            ok = FindNextFileA(f->find, &fd);
-        }
-    } while (ok && (!strcmp(fd.cFileName, ".") || !strcmp(fd.cFileName, "..")));
-    if (!ok) {
+    char mask[GPATH] = "*";
+    if (a[8] && M16(a[8])) ansi_read(a[8], mask, sizeof mask);
+
+    if (!f->find || restart) {
+        if (f->find) redline_fs_dir_close(f->find);
+        f->find = redline_fs_dir_open(f->host);
+    }
+    if (!f->find) {
         iosb(a[4], STATUS_NO_MORE_FILES, 0);
         return STATUS_NO_MORE_FILES;
     }
-    uint32_t out = a[5], name_len = (uint32_t)strlen(fd.cFileName);
+
+    RedlineFsDirEntry entry;
+    RedlineFsInfo info;
+    int next;
+    do {
+        next = redline_fs_dir_read(f->find, &entry);
+        if (next <= 0) {
+            redline_fs_dir_close(f->find);
+            f->find = 0;
+            iosb(a[4], STATUS_NO_MORE_FILES, 0);
+            return STATUS_NO_MORE_FILES;
+        }
+    } while (!strcmp(entry.name, ".") || !strcmp(entry.name, "..") ||
+             !directory_mask_match(mask, entry.name));
+
+    char path[MAX_PATH];
+    int path_len = snprintf(path, sizeof path, "%s/%s", f->host, entry.name);
+    if (path_len < 0 || (size_t)path_len >= sizeof path ||
+        redline_fs_stat(path, &info)) {
+        iosb(a[4], STATUS_NO_MORE_FILES, 0);
+        return STATUS_NO_MORE_FILES;
+    }
+
+    uint32_t out = a[5], name_len = (uint32_t)strlen(entry.name);
     if (0x40 + name_len > a[6]) return STATUS_INVALID_PARAMETER;
     memset(g_mem + out, 0, 0x40);
-    put_time(out + 0x08, fd.ftCreationTime);
-    put_time(out + 0x10, fd.ftLastAccessTime);
-    put_time(out + 0x18, fd.ftLastWriteTime);
-    put_time(out + 0x20, fd.ftLastWriteTime);
-    uint64_t size = ((uint64_t)fd.nFileSizeHigh << 32) | fd.nFileSizeLow;
-    M64(out + 0x28) = size;
-    M64(out + 0x30) = (size + 4095) & ~4095ull;
-    M32(out + 0x38) = fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+    FILETIME modified = filetime_from_unix_seconds(info.modified_seconds);
+    put_time(out + 0x18, modified);
+    put_time(out + 0x20, modified);
+    M64(out + 0x28) = info.size;
+    M64(out + 0x30) = (info.size + 4095) & ~4095ull;
+    M32(out + 0x38) = info.is_directory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
     M32(out + 0x3C) = name_len;
-    memcpy(g_mem + out + 0x40, fd.cFileName, name_len);
+    memcpy(g_mem + out + 0x40, entry.name, name_len);
     iosb(a[4], STATUS_SUCCESS, 0x40 + name_len);
     complete_io(c, a[1], a[2], a[3], a[4]);
     return STATUS_SUCCESS;
