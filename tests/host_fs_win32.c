@@ -33,6 +33,7 @@ int main(void) {
     CHECK(redline_fs_truncate(handle, 5) == 0);
     CHECK(redline_fs_seek(handle, 0, SEEK_CUR) == 4); /* truncate preserves current offset */
     CHECK(redline_fs_pread(handle, buffer, 5, 0) == 5);
+    CHECK(redline_fs_pread(handle, buffer, sizeof buffer, 64) == 0);
     CHECK(memcmp(buffer, "windo", 5) == 0);
     CHECK(redline_fs_pwrite(handle, "SAVE", 4, 0) == 4);
     CHECK(redline_fs_sync(handle) == 0);
