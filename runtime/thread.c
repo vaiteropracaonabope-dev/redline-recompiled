@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include <inttypes.h>
 
 #include "xbox.h"
 #include "host_sync.h"
@@ -141,7 +142,7 @@ void gil_yield(void) {
     if (t_ctx && M8(t_ctx->fs_base + 0x24) >= 2) {
         static volatile int32_t told;
         if (gil_log() && now - g_gil_since > 20 * g_gil_quantum && redline_sync_fetch_add(&told, 1) + 1 <= 20)
-            fprintf(stderr, "[gil] thread %lu at IRQL %u keeps the lock %.0f ms in %08X\n", redline_sync_thread_id(),
+            fprintf(stderr, "[gil] thread %" PRIu64 " at IRQL %u keeps the lock %.0f ms in %08X\n", redline_sync_thread_id(),
                     M8(t_ctx->fs_base + 0x24), (double)(now - g_gil_since) / 1000000.0, t_ctx->last_fn);
         return;
     }
