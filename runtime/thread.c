@@ -15,6 +15,7 @@
 #include "xbox.h"
 #include "host_sync.h"
 #include "host_thread.h"
+#include "dispatcher_objects.h"
 
 #define STATUS_SUCCESS 0x00000000u
 #define STATUS_USER_APC 0x000000C0u
@@ -458,10 +459,7 @@ static int try_acquire(uint32_t o, uint32_t thread) {
         OBJ_SIGNAL(o) -= 1;
         return 1;
     case OBJ_MUTANT:
-        if (OBJ_SIGNAL(o) <= 0 && MUTANT_OWNER(o) != thread) return 0;
-        OBJ_SIGNAL(o) -= 1;
-        MUTANT_OWNER(o) = thread;
-        return 1;
+        return redline_mutant_acquire(&OBJ_SIGNAL(o), &MUTANT_OWNER(o), thread);
     default: /* notification event/timer, thread */
         return OBJ_SIGNAL(o) > 0;
     }
@@ -470,6 +468,33 @@ static int try_acquire(uint32_t o, uint32_t thread) {
 static int is_signaled(uint32_t o, uint32_t thread) {
     if (OBJ_TYPE(o) == OBJ_MUTANT) return OBJ_SIGNAL(o) > 0 || MUTANT_OWNER(o) == thread;
     return OBJ_SIGNAL(o) > 0;
+}
+
+/* Wait-all must account for duplicate handles: a semaphore needs one token per occurrence, while
+ * synchronization events/timers can only be consumed once. Check every object before consuming any. */
+static int can_acquire_all(uint32_t count, const uint32_t *objs, uint32_t thread) {
+    for (uint32_t i = 0; i < count; ++i) {
+        uint32_t duplicates = 1;
+        for (uint32_t j = 0; j < i; ++j) if (objs[j] == objs[i]) { duplicates = 0; break; }
+        if (!duplicates) continue;
+        for (uint32_t j = i + 1; j < count; ++j) if (objs[j] == objs[i]) ++duplicates;
+        switch (OBJ_TYPE(objs[i])) {
+        case OBJ_EVENT_SYNC:
+        case OBJ_TIMER_SYNC:
+            if (duplicates > 1 || OBJ_SIGNAL(objs[i]) <= 0) return 0;
+            break;
+        case OBJ_SEMAPHORE:
+            if (OBJ_SIGNAL(objs[i]) < (int32_t)duplicates) return 0;
+            break;
+        case OBJ_MUTANT:
+            if (MUTANT_OWNER(objs[i]) != thread && OBJ_SIGNAL(objs[i]) <= 0) return 0;
+            break;
+        default:
+            if (OBJ_SIGNAL(objs[i]) <= 0) return 0;
+            break;
+        }
+    }
+    return 1;
 }
 
 /* User APCs (I/O completion routines) wait on their thread's queue until it waits alertably, as on the Xbox:
@@ -521,10 +546,13 @@ static uint32_t wait_objects(X86Ctx *c, uint32_t count, const uint32_t *objs, in
     }
     for (;;) {
         if (wait_all) {
-            uint32_t i;
-            for (i = 0; i < count && is_signaled(objs[i], thread); i++) {}
-            if (i == count) {
-                for (i = 0; i < count; i++) try_acquire(objs[i], thread);
+            if (can_acquire_all(count, objs, thread)) {
+                for (uint32_t i = 0; i < count; ++i) {
+                    if (!try_acquire(objs[i], thread)) {
+                        fprintf(stderr, "[thread] wait-all acquisition invariant failed\\n");
+                        fatal_exit(1);
+                    }
+                }
                 return STATUS_SUCCESS;
             }
         } else {
@@ -599,6 +627,8 @@ static uint32_t k_NtCreateEvent(X86Ctx *c, const uint32_t *a) {
 }
 static uint32_t k_NtCreateSemaphore(X86Ctx *c, const uint32_t *a) {
     /* (*SemaphoreHandle, ObjectAttributes, InitialCount, MaximumCount) */
+    if (!redline_semaphore_valid_create((int32_t)a[2], (int32_t)a[3]))
+        return 0xC000000Du; /* STATUS_INVALID_PARAMETER */
     uint32_t o = kernel_alloc(0x14);
     obj_init(o, OBJ_SEMAPHORE, 5, (int32_t)a[2]);
     SEMAPHORE_LIMIT(o) = (int32_t)a[3];
@@ -632,18 +662,19 @@ static uint32_t k_NtClearEvent(X86Ctx *c, const uint32_t *a) {
 }
 static uint32_t k_NtReleaseSemaphore(X86Ctx *c, const uint32_t *a) {
     /* (Handle, ReleaseCount, *PreviousCount) */
-    int32_t prev = OBJ_SIGNAL(a[0]);
-    if (prev + (int32_t)a[1] > SEMAPHORE_LIMIT(a[0])) return 0xC0000047u; /* STATUS_SEMAPHORE_LIMIT_EXCEEDED */
-    OBJ_SIGNAL(a[0]) = prev + (int32_t)a[1];
+    int32_t prev = OBJ_SIGNAL(a[0]), next;
+    if (!redline_semaphore_release(prev, SEMAPHORE_LIMIT(a[0]), (int32_t)a[1], &next))
+        return 0xC0000047u; /* STATUS_SEMAPHORE_LIMIT_EXCEEDED / invalid release count */
+    OBJ_SIGNAL(a[0]) = next;
     wake(a[0]);
     if (a[2]) M32(a[2]) = (uint32_t)prev;
     return STATUS_SUCCESS;
 }
 static uint32_t k_NtReleaseMutant(X86Ctx *c, const uint32_t *a) {
     /* (Handle, *PreviousCount) */
-    int32_t prev = OBJ_SIGNAL(a[0]);
-    if (MUTANT_OWNER(a[0]) != current_thread(c)) return 0xC0000046u; /* STATUS_MUTANT_NOT_OWNED */
-    if (++OBJ_SIGNAL(a[0]) > 0) MUTANT_OWNER(a[0]) = 0;
+    int32_t prev;
+    if (!redline_mutant_release(&OBJ_SIGNAL(a[0]), &MUTANT_OWNER(a[0]), current_thread(c), &prev))
+        return 0xC0000046u; /* STATUS_MUTANT_NOT_OWNED */
     wake(a[0]);
     if (a[1]) M32(a[1]) = (uint32_t)prev;
     return STATUS_SUCCESS;
