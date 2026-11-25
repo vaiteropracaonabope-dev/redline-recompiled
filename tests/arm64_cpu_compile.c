@@ -76,13 +76,13 @@ int main(void) {
     /* Portable Xbox device-path parser: no Windows APIs are needed. */
     {
         RedlineXboxPath path;
-        if (!redline_xbox_path_classify("\\\\Device\\\\CdRom0\\\\media\\\\cars.xpr", &path) ||
+        if (!redline_xbox_path_classify("\\Device\\CdRom0\\media\\cars.xpr", &path) ||
             path.device != REDLINE_XBOX_PATH_DISC ||
-            strcmp(path.suffix, "\\\\media\\\\cars.xpr") != 0) return 11;
-        if (!redline_xbox_path_classify("\\\\Device\\\\Harddisk0\\\\Partition12", &path) ||
+            strcmp(path.suffix, "\\media\\cars.xpr") != 0) return 11;
+        if (!redline_xbox_path_classify("\\Device\\Harddisk0\\Partition12", &path) ||
             path.device != REDLINE_XBOX_PATH_PARTITION || path.partition != 12 ||
-            !redline_xbox_path_is_partition_root("\\\\Device\\\\Harddisk0\\\\Partition12\\\\")) return 12;
-        if (!redline_xbox_path_classify("\\\\Device\\\\Harddisk0\\\\Partition3\\\\cache\\\\file.dat", &path) ||
+            !redline_xbox_path_is_partition_root("\\Device\\Harddisk0\\Partition12\\")) return 12;
+        if (!redline_xbox_path_classify("\\Device\\Harddisk0\\Partition3\\cache\\file.dat", &path) ||
             path.device != REDLINE_XBOX_PATH_PARTITION || path.partition != 3 ||
             strcmp(path.suffix, "\\\\cache\\\\file.dat") != 0) return 13;
         if (redline_xbox_path_classify("\\\\Device\\\\CdRom01\\\\media", &path) ||
