@@ -124,10 +124,15 @@ int64_t redline_fs_seek(RedlineFsHandle handle, int64_t offset, int whence) {
 }
 
 int redline_fs_truncate(RedlineFsHandle handle, uint64_t size) {
-    LARGE_INTEGER position, end;
+    LARGE_INTEGER current, end, ignored;
+    HANDLE file = (HANDLE)(intptr_t)handle;
     end.QuadPart = size;
-    if (!SetFilePointerEx((HANDLE)(intptr_t)handle, end, &position, FILE_BEGIN) ||
-        !SetEndOfFile((HANDLE)(intptr_t)handle)) {
+    if (!SetFilePointerEx(file, (LARGE_INTEGER){0}, &current, FILE_CURRENT) ||
+        !SetFilePointerEx(file, end, &ignored, FILE_BEGIN) || !SetEndOfFile(file)) {
+        redline_fs_set_errno();
+        return -1;
+    }
+    if (!SetFilePointerEx(file, current, NULL, FILE_BEGIN)) {
         redline_fs_set_errno();
         return -1;
     }
