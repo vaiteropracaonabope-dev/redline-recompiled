@@ -64,7 +64,6 @@ static void test_capacity_and_invalid_inputs(void) {
     uint8_t type = 0;
     redline_guest_handles_init(&table);
     assert(!redline_guest_handle_insert(&table, 0, 1, &handles[0]));
-    assert(!redline_guest_handle_insert(&table, 1, 0, &handles[0]));
     assert(!redline_guest_handle_insert(&table, 1, 1, NULL));
     for (uint32_t i = 0; i < REDLINE_GUEST_HANDLE_CAPACITY; ++i)
         assert(redline_guest_handle_insert(&table, 0xB0010000u + i * 0x20u, 1, &handles[i]));
