@@ -114,3 +114,11 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Add Android NDK syntax-only compilation of `runtime/thread.c`; Windows MSVC translation-unit compilation and ARM64 NDK syntax check both passed in workflow run 45525130504.
 - [x] Resolve portability issues exposed by the new checks: fixed-width GIL waiter declaration, local NT wait status constants after removing `windows.h`, and portable 64-bit diagnostic formatting.
 - [ ] `thread.c` is now syntax-checkable for Android but not yet linked into a complete Android runtime. Event-object scheduling semantics and platform-specific priority behavior still require runtime validation.
+
+
+## Dispatcher wait portability
+
+- [x] Replace 1 ms polling for wait-any and wait-all dispatcher waits with a shared host synchronization sequence; waiters capture the sequence while holding the guest lock, release the lock, and sleep until a signal notification or timeout.
+- [x] Route dispatcher object signal changes through the shared wake sequence, including thread/event/semaphore/mutant/timer paths in `thread.c`.
+- [x] Notify dispatcher waiters when synchronous file I/O completion signals an event in `file.c`.
+- [ ] Validate the revised wait behavior with the Android NDK and Windows translation-unit CI checks; runtime stress tests for wait-any/wait-all, synchronization events, APCs, and timeout races remain necessary.
