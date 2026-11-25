@@ -30,6 +30,7 @@ int main(void) {
     CHECK(handle >= 0);
     CHECK(redline_fs_write(handle, payload, sizeof payload) == (int64_t)sizeof payload);
     CHECK(redline_fs_pread(handle, readback, sizeof payload, 0) == (int64_t)sizeof payload);
+    CHECK(redline_fs_pread(handle, readback, sizeof readback, sizeof payload + 8) == 0);
     CHECK(memcmp(readback, payload, sizeof payload) == 0);
     CHECK(redline_fs_pwrite(handle, "SAVE", 4, 0) == 4);
     CHECK(redline_fs_seek(handle, 0, SEEK_SET) == 0);
