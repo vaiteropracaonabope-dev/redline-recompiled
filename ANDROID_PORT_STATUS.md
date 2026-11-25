@@ -144,3 +144,16 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Extend pure dispatcher tests for recursive owner exit, abandonment state, next-thread acquisition, and clearing the abandoned flag.
 - [ ] Full runtime tests with actual guest thread exit, wait-any/wait-all races, and mutant lifetime/handle references remain pending. The registry is intentionally bounded because dispatcher objects are not yet reference-counted or reclaimed.
 - [x] Android NDK compile, native ARM64 runtime tests, and Windows MSVC checks passed in workflow run 45526294099 (all three jobs successful).
+
+
+## Guest kernel handle references
+
+- [x] Add checked reference-count primitives for raw guest object-address handles, including overflow/underflow rejection.
+- [x] Initialize dispatcher-object references and file-object references at creation.
+- [x] Duplicate handles now acquire a reference; `NtClose` releases one reference and reports invalid handles.
+- [x] `ObReferenceObjectByHandle` and `ObfDereferenceObject` now maintain object references.
+- [x] Final file-handle release closes the host file/directory resources; final dispatcher-object release logically invalidates the object (guest kernel bump allocations are not reused).
+- [x] Validate handles before multi-object waits; invalid or already-closed objects return `STATUS_INVALID_HANDLE`.
+- [ ] KTHREAD objects remain retained as stable wait targets; full thread-object lifetime/reference accounting and actual guest ABI validation for duplicate/close calls remain open.
+- [ ] Guest kernel object memory is bump-allocated, so logical invalidation does not reclaim guest memory. A free-list/allocator and object-type-specific cleanup are still future work.
+- [ ] Await Android NDK, native ARM64, and Windows CI for the handle-reference changes.
