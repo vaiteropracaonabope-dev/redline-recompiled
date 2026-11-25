@@ -27,6 +27,7 @@ jobs:
           "$CC" -std=c11 -Wall -Wextra -Werror -Iruntime -fsyntax-only runtime/host_fs_posix.c tests/host_fs_posix.c
           "$CC" -std=c11 -Wall -Wextra -Werror -Iruntime -fsyntax-only runtime/file.c
           "$CC" -std=c11 -Wall -Wextra -Werror -Iruntime -fsyntax-only runtime/host_sync_posix.c tests/host_sync_posix.c
+          "$CC" -std=c11 -Wall -Wextra -Werror -pthread -Iruntime -fsyntax-only runtime/host_thread_posix.c tests/host_thread_posix.c
 
   arm64-runtime-check:
     runs-on: ubuntu-24.04-arm
@@ -37,6 +38,7 @@ jobs:
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iruntime tests/arm64_cpu_compile.c -o /tmp/arm64-cpu-test
           cc -std=c11 -O2 -Wall -Wextra -Werror -pthread -Iruntime runtime/host_fs_posix.c tests/host_fs_posix.c -o /tmp/host-fs-test
           cc -std=c11 -O2 -Wall -Wextra -Werror -pthread -Iruntime runtime/host_sync_posix.c tests/host_sync_posix.c -o /tmp/host-sync-test
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pthread -Iruntime runtime/host_sync_posix.c runtime/host_thread_posix.c tests/host_thread_posix.c -o /tmp/host-thread-test
       - name: Run ARM64 CPU runtime test
         run: /tmp/arm64-cpu-test
       - name: Run POSIX filesystem test
