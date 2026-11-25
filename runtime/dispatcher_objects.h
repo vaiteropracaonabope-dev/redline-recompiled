@@ -57,3 +57,17 @@ static inline int redline_object_dereference(uint32_t *references) {
     if (!references || !*references) return 0;
     return --*references == 0;
 }
+
+/* Remove a released object from a compact array registry without leaving stale slots. */
+static inline int redline_object_registry_remove(uint32_t *objects, uint32_t *count,
+                                                 uint32_t capacity, uint32_t object) {
+    if (!objects || !count || !object || *count > capacity) return 0;
+    for (uint32_t i = 0; i < *count; ++i) {
+        if (objects[i] != object) continue;
+        objects[i] = objects[*count - 1];
+        objects[*count - 1] = 0;
+        --*count;
+        return 1;
+    }
+    return 0;
+}
