@@ -111,4 +111,6 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Move host thread naming and best-effort priority changes behind `host_thread`; POSIX uses `pthread_setname_np` and a best-effort `SCHED_FIFO` request, while Windows uses `SetThreadDescription` and `SetThreadPriority`.
 - [x] Remove the direct `windows.h` dependency from `runtime/thread.c`; replace Win32 thread IDs/types with fixed-width types and `host_sync` IDs.
 - [x] Route watchdog marker-file deletion through `host_fs` and process termination through `fatal_exit`.
-- [ ] Remaining `thread.c` dependencies and behavior need a full Android NDK compile/integration pass; event-object scheduling semantics and platform-specific priority behavior still require runtime validation.
+- [x] Add Android NDK syntax-only compilation of `runtime/thread.c`; Windows MSVC translation-unit compilation and ARM64 NDK syntax check both passed in workflow run 45525130504.
+- [x] Resolve portability issues exposed by the new checks: fixed-width GIL waiter declaration, local NT wait status constants after removing `windows.h`, and portable 64-bit diagnostic formatting.
+- [ ] `thread.c` is now syntax-checkable for Android but not yet linked into a complete Android runtime. Event-object scheduling semantics and platform-specific priority behavior still require runtime validation.
