@@ -4,7 +4,7 @@
  * safe to run concurrently (the Xbox had one CPU). Blocking kernel calls drop the lock while they wait.
  * Waitable objects live in guest memory as DISPATCHER_HEADERs, and a handle is the object's guest address.
  */
-#include <windows.h>
+#include "host_fs.h"
 #include <setjmp.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -51,7 +51,7 @@ static int gil_log(void) {
     return log;
 }
 typedef struct {
-    DWORD tid;
+    uint64_t tid;
     uint32_t fn;
     double held, waited, worst_wait, worst_hold;
     int n;
@@ -67,7 +67,7 @@ static int by_held(const void *a, const void *b) {
 }
 
 static int gil_stat(void) {
-    DWORD tid = GetCurrentThreadId();
+    uint64_t tid = redline_sync_thread_id();
     int i;
     for (i = 0; i < 63 && g_gil_stat[i].tid && g_gil_stat[i].tid != tid; i++) {}
     g_gil_stat[i].tid = tid;
@@ -141,7 +141,7 @@ void gil_yield(void) {
     if (t_ctx && M8(t_ctx->fs_base + 0x24) >= 2) {
         static volatile int32_t told;
         if (gil_log() && now - g_gil_since > 20 * g_gil_quantum && redline_sync_fetch_add(&told, 1) + 1 <= 20)
-            fprintf(stderr, "[gil] thread %lu at IRQL %u keeps the lock %.0f ms in %08X\n", GetCurrentThreadId(),
+            fprintf(stderr, "[gil] thread %lu at IRQL %u keeps the lock %.0f ms in %08X\n", redline_sync_thread_id(),
                     M8(t_ctx->fs_base + 0x24), (double)(now - g_gil_since) / 1000000.0, t_ctx->last_fn);
         return;
     }
@@ -229,7 +229,7 @@ static uint32_t g_interrupts[16]; /* connected KINTERRUPTs (interrupts section b
 /* where every guest thread is: its current function and the game's return addresses on its stack (HITCHLOG's
  * stalls too) */
 void guest_threads_report(const char *tag) {
-    for (LONG i = 0; i < g_ncontexts && i < 64; i++) {
+    for (int i = 0; i < g_ncontexts && i < 64; i++) {
         X86Ctx *c = g_contexts[i];
         if (!c) continue;
         fprintf(stderr, "[%s] thread %08X in function %08X stack:", tag, M32(c->fs_base + 0x28), c->last_fn);
@@ -242,7 +242,7 @@ void guest_threads_report(const char *tag) {
 }
 
 static void hang_report(void) {
-    for (LONG i = 0; i < g_ncontexts && i < 64; i++) {
+    for (int i = 0; i < g_ncontexts && i < 64; i++) {
         X86Ctx *c = g_contexts[i];
         if (!c) continue;
         fprintf(stderr, "[hang] thread %08X in function %08X esp=%08X eax=%08X ecx=%08X edx=%08X stack:",
@@ -257,7 +257,7 @@ static void hang_report(void) {
         fprintf(stderr, "\n");
     }
     /* sample each thread's current function for a second: shows every function in a spin loop */
-    for (LONG i = 0; i < g_ncontexts && i < 64; i++) {
+    for (int i = 0; i < g_ncontexts && i < 64; i++) {
         uint32_t fn[16] = {0}, hits[16] = {0};
         if (!g_contexts[i]) continue;
         for (int s = 0; s < 1000; s++) {
@@ -287,22 +287,22 @@ static void hang_report(void) {
 
 static void watchdog_proc(void *p) {
     thread_name("watchdog");
-    ULONGLONG due = p ? (redline_sync_monotonic_ns() / 1000000ull) + 1000ull * (uintptr_t)p : ~0ull;
+    uint64_t due = p ? (redline_sync_monotonic_ns() / 1000000ull) + 1000ull * (uintptr_t)p : ~0ull;
     for (;;) {
         redline_sync_sleep_ms(1000);
-        if (DeleteFileA("build/prof.now")) profile_run(5);
+        if (redline_fs_unlink("build/prof.now") == 0) profile_run(5);
         memwatch_poll();
-        if (DeleteFileA("build/ram.now")) { /* guest RAM as it is (no lock: a snapshot taken while threads run), at
+        if (redline_fs_unlink("build/ram.now") == 0) { /* guest RAM as it is (no lock: a snapshot taken while threads run), at
                                               * file offset = guest address; the unmapped first 64 KiB as zeros */
             static const uint8_t zero[GUEST_RAM_BASE];
             FILE *f = fopen("build/ram.bin", "wb");
             if (f) fwrite(zero, 1, sizeof zero, f), fwrite(g_mem + GUEST_RAM_BASE, 1, GUEST_RAM_END - GUEST_RAM_BASE, f), fclose(f);
             fprintf(stderr, "[ram] wrote build/ram.bin\n");
         }
-        int asked = DeleteFileA("build/hang.now");
+        int asked = redline_fs_unlink("build/hang.now") == 0;
         if (!asked && (redline_sync_monotonic_ns() / 1000000ull) < due) continue;
         hang_report();
-        if (!asked) ExitProcess(5);
+        if (!asked) fatal_exit(5);
     }
 }
 
@@ -343,20 +343,14 @@ typedef struct {
     uint32_t start_routine, start_context, system_routine;
 } ThreadStart;
 
-/* this host thread's name (SetThreadDescription, Windows 10 1607 and later): profilers and HITCHLOG show it */
+/* Host thread labels are optional metadata; the platform backend may ignore them. */
 void thread_name(const char *fmt, ...) {
-    static HRESULT(WINAPI * set)(HANDLE, PCWSTR);
-    static int init;
-    if (!init) set = (HRESULT(WINAPI *)(HANDLE, PCWSTR))(void *)GetProcAddress(GetModuleHandleA("kernel32.dll"), "SetThreadDescription"), init = 1;
-    if (!set) return;
-    char a[64];
-    wchar_t w[64];
+    char name[64];
     va_list ap;
     va_start(ap, fmt);
-    vsnprintf(a, sizeof a, fmt, ap);
+    vsnprintf(name, sizeof name, fmt, ap);
     va_end(ap);
-    MultiByteToWideChar(CP_UTF8, 0, a, -1, w, 64);
-    set(GetCurrentThread(), w);
+    redline_thread_set_name(name);
 }
 
 static void thread_proc(void *p) {
@@ -505,15 +499,15 @@ static uint32_t wait_objects(X86Ctx *c, uint32_t count, const uint32_t *objs, in
                              int alertable) {
     if (alertable && deliver_apcs(c)) return STATUS_USER_APC;
     uint32_t thread = current_thread(c);
-    ULONGLONG deadline = ~0ull;
+    uint64_t deadline = ~0ull;
     if (timeout_ptr) {
         int64_t t = (int64_t)M64(timeout_ptr);
         if (t < 0) {
-            deadline = (redline_sync_monotonic_ns() / 1000000ull) + (ULONGLONG)(-t / 10000);
+            deadline = (redline_sync_monotonic_ns() / 1000000ull) + (uint64_t)(-t / 10000);
         } else {
             int64_t now = (int64_t)redline_sync_realtime_100ns() + 116444736000000000ll;
             deadline = (redline_sync_monotonic_ns() / 1000000ull) +
-                       (t > now ? (ULONGLONG)((t - now) / 10000) : 0);
+                       (t > now ? (uint64_t)((t - now) / 10000) : 0);
         }
     }
     for (;;) {
@@ -709,17 +703,17 @@ static uint32_t g_dpc_queue[MAX_DPCS];
 static int g_dpc_count;
 static struct {
     uint32_t timer;
-    ULONGLONG due;
+    uint64_t due;
     uint32_t period;
 } g_timers[MAX_TIMERS];
 static X86Ctx g_dpc_ctx;
 
-static ULONGLONG due_ms(uint32_t lo, uint32_t hi) {
+static uint64_t due_ms(uint32_t lo, uint32_t hi) {
     int64_t t = (int64_t)(((uint64_t)hi << 32) | lo);
-    if (t < 0) return (redline_sync_monotonic_ns() / 1000000ull) + (ULONGLONG)(-t / 10000);
+    if (t < 0) return (redline_sync_monotonic_ns() / 1000000ull) + (uint64_t)(-t / 10000);
     int64_t now = (int64_t)redline_sync_realtime_100ns() + 116444736000000000ll;
     return (redline_sync_monotonic_ns() / 1000000ull) +
-           (t > now ? (ULONGLONG)((t - now) / 10000) : 0);
+           (t > now ? (uint64_t)((t - now) / 10000) : 0);
 }
 
 static int queue_dpc(uint32_t dpc, uint32_t a1, uint32_t a2) {
@@ -759,7 +753,7 @@ static void dpc_proc(void *p) {
     track(&g_dpc_ctx);
     /* Wait on a host atomic word rather than a Win32 event/timer. POSIX can retain sub-ms
      * deadlines; the Windows backend rounds to the nearest millisecond. */
-    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+    redline_thread_set_priority(REDLINE_THREAD_PRIORITY_TIME_CRITICAL);
     static double next_vblank;
     for (;;) {
         double ms = (double)redline_sync_monotonic_ns() / 1000000.0;
@@ -772,7 +766,7 @@ static void dpc_proc(void *p) {
         else gil_acquire();
         nv2a_tick();
         M32(0xFE820010u) = (uint32_t)((redline_sync_monotonic_ns() / 1000000ull) * 48); /* APU global sample counter (XGSCNT), 48 kHz */
-        ULONGLONG now = (redline_sync_monotonic_ns() / 1000000ull);
+        uint64_t now = (redline_sync_monotonic_ns() / 1000000ull);
         for (int i = 0; i < MAX_TIMERS; i++) {
             uint32_t t = g_timers[i].timer;
             if (!t || g_timers[i].due > now) continue;
