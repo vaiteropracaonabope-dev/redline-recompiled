@@ -44,3 +44,16 @@ static inline int redline_mutant_release(int32_t *signal, uint32_t *owner, uint3
     if (++*signal > 0) *owner = 0;
     return 1;
 }
+
+/* Raw guest handles are object addresses. Each duplicate/reference owns one count. */
+static inline int redline_object_reference(uint32_t *references) {
+    if (!references || !*references || *references == UINT32_MAX) return 0;
+    ++*references;
+    return 1;
+}
+
+/* Returns 1 when this release drops the last reference. */
+static inline int redline_object_dereference(uint32_t *references) {
+    if (!references || !*references) return 0;
+    return --*references == 0;
+}
