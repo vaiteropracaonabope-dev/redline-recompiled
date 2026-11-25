@@ -34,11 +34,11 @@ static void redline_fs_set_errno(void) {
     errno = redline_fs_errno(GetLastError());
 }
 
-static int redline_fs_filetime_seconds(FILETIME time) {
+static int64_t redline_fs_filetime_seconds(FILETIME time) {
     ULARGE_INTEGER ticks;
     ticks.LowPart = time.dwLowDateTime;
     ticks.HighPart = time.dwHighDateTime;
-    return (int)((ticks.QuadPart - 116444736000000000ull) / 10000000ull);
+    return (int64_t)((ticks.QuadPart - 116444736000000000ull) / 10000000ull);
 }
 
 RedlineFsHandle redline_fs_open(const char *path, unsigned flags, unsigned mode) {
@@ -178,8 +178,8 @@ RedlineFsDirHandle redline_fs_dir_open(const char *path) {
     RedlineFsWinDir *dir = (RedlineFsWinDir *)calloc(1, sizeof *dir);
     char pattern[MAX_PATH];
     if (!dir) { errno = ENOMEM; return (RedlineFsDirHandle)0; }
-    if (snprintf(pattern, sizeof pattern, "%s\\*", path) < 0 ||
-        strlen(pattern) >= sizeof pattern) {
+    int length = snprintf(pattern, sizeof pattern, "%s\\*", path);
+    if (length < 0 || (size_t)length >= sizeof pattern) {
         free(dir);
         errno = ENAMETOOLONG;
         return (RedlineFsDirHandle)0;
