@@ -84,4 +84,5 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Route Xbox file open/create, sequential and positioned read/write, flush, close, seek/query-position, truncate/end-of-file, delete-on-close, `NtDeleteFile`, HDD partition directory creation, and recursive partition cleanup through `host_fs`.
 - [x] Preserve positioned-read EOF behavior across POSIX and Windows; both backend tests assert that a read beyond EOF returns zero bytes.
 - [x] Add a Windows CI compile-only check for `runtime/file.c`; workflow run 45520963051 passed alongside ARM64 native/POSIX tests and Android NDK header checks.
+- [x] Remove the direct `windows.h` include and Windows-specific timing/string helpers from `runtime/file.c`; replace the remaining Windows file-time type with a local fixed-width representation.
 - [ ] Remove remaining Win32 dependencies from the HLE: `windows.h` types/includes, performance-counter timing, and other Windows-specific helpers remain. File metadata/timestamp queries and directory enumeration now use `host_fs`; the full `runtime/file.c` is not yet Android-compilable.
