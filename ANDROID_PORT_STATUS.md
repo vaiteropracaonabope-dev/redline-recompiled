@@ -24,7 +24,7 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Add a host packed-float SIMD abstraction for x64 SSE2 and ARM64 NEON (`runtime/host_simd.h`) and expose the lifter's existing intrinsic spellings on ARM64.
 - [x] Add a scalar ARM64 MMX implementation in `runtime/x86.h`, retaining the SSE2 implementation for x64 and the independent scalar reference/self-test in `runtime/runtime.c`.
 - [x] Cross-compile the ARM64 CPU compatibility test with Android NDK 27.2.12479018; GitHub Actions run 45518316795 completed successfully.
-- [ ] Run native ARM64 runtime assertions for packed-float arithmetic, MINPS/MAXPS edge semantics, and selected MMX operations. The native ARM64 job was added; execution result is pending.
+- [x] Run native ARM64 runtime assertions for packed-float arithmetic, MINPS/MAXPS edge semantics, and selected MMX operations; GitHub Actions run 45518666662 passed this native ARM64 job.
 - [ ] Expand MMX differential coverage against the independent reference used by the Windows runtime; current Android test checks selected known-answer cases, not every MMX opcode.
 - [ ] Design the remaining platform abstraction boundaries before replacing platform APIs.
 - [ ] Add an Android NDK/Gradle skeleton only after the native entry points and graphics strategy are known.
