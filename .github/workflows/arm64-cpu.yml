@@ -57,6 +57,7 @@ jobs:
           cl /nologo /W3 /WX host-fs-backend.obj host-fs-test.obj /Fe:host-fs-win32-test.exe
           host-fs-win32-test.exe
           cl /nologo /W3 /D_CRT_SECURE_NO_WARNINGS /Iruntime /c runtime\file.c /Fo:file-hle.obj
+          cl /nologo /W3 /c /Iruntime runtime\thread.c /Fo:thread-hle.obj
           cl /nologo /W3 /WX /c /Iruntime runtime\host_sync_win32.c /Fo:host-sync-backend.obj
           cl /nologo /W3 /WX /c /Iruntime tests\host_sync_win32.c /Fo:host-sync-test.obj
           cl /nologo /W3 /WX host-sync-backend.obj host-sync-test.obj /Fe:host-sync-win32-test.exe
