@@ -17,6 +17,8 @@
 #include "host_thread.h"
 
 #define STATUS_SUCCESS 0x00000000u
+#define STATUS_USER_APC 0x000000C0u
+#define STATUS_TIMEOUT 0x00000102u
 #define NT_CURRENT_THREAD 0xFFFFFFFEu
 
 /* DISPATCHER_HEADER: u8 Type, Absolute, Size, Inserted; i32 SignalState; LIST_ENTRY WaitListHead */
