@@ -2,8 +2,7 @@
  *
  * This header is intentionally self-contained. The ARM64 path uses NEON while
  * the existing Windows x64 path retains the compiler's SSE2 intrinsics.
- * Do not include this in x86.h until its separate MMX/SSE2 integer helper has
- * also been given an ARM64 implementation.
+ * The separate MMX integer helper is selected in x86.h for each host architecture.
  */
 #pragma once
 
