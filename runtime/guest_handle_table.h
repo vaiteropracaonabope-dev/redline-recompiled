@@ -1,7 +1,7 @@
 /* Generation-tagged guest handle table primitives.
  *
  * This is deliberately not wired into the Xbox HLE yet: the Xbox ABI boundary must
- * be audited before changing values returned by Nt*/Ps* exports. A handle owns one
+ * be audited before changing values returned by Nt- and Ps-family exports. A handle owns one
  * object reference; callers perform object ref/deref around insert/duplicate/close.
  */
 #pragma once
