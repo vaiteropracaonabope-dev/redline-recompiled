@@ -13,10 +13,19 @@ int32_t redline_sync_fetch_add(volatile int32_t *value, int32_t amount) {
 int32_t redline_sync_exchange(volatile int32_t *value, int32_t desired) {
     return (int32_t)InterlockedExchange((volatile LONG *)value, (LONG)desired);
 }
-int redline_sync_wait_i32(const volatile int32_t *value, int32_t expected, int timeout_ms) {
-    DWORD timeout = timeout_ms < 0 ? INFINITE : (DWORD)timeout_ms;
+int redline_sync_wait_i32_ns(const volatile int32_t *value, int32_t expected, int64_t timeout_ns) {
+    DWORD timeout;
+    if (timeout_ns < 0) timeout = INFINITE;
+    else if (timeout_ns == 0) timeout = 0;
+    else {
+        uint64_t milliseconds = ((uint64_t)timeout_ns + 999999ull) / 1000000ull;
+        timeout = milliseconds >= (uint64_t)INFINITE ? INFINITE - 1 : (DWORD)milliseconds;
+    }
     return WaitOnAddress((volatile VOID *)value, &expected, sizeof expected, timeout) ? 1 :
            GetLastError() == ERROR_TIMEOUT ? 0 : -1;
+}
+int redline_sync_wait_i32(const volatile int32_t *value, int32_t expected, int timeout_ms) {
+    return redline_sync_wait_i32_ns(value, expected, timeout_ms < 0 ? -1 : (int64_t)timeout_ms * 1000000ll);
 }
 void redline_sync_wake_all(const volatile int32_t *value) { WakeByAddressAll((PVOID)value); }
 uint64_t redline_sync_monotonic_ns(void) {
