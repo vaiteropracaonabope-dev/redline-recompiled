@@ -15,6 +15,8 @@ int main(void) {
     char readback[16] = {0};
     const char payload[] = "android-fs";
     RedlineFsInfo info;
+    RedlineFsTime accessed_time = {1700000000, 123000000};
+    RedlineFsTime modified_time = {1700000100, 456000000};
     RedlineFsDirEntry entry;
     RedlineFsDirHandle dir;
     RedlineFsHandle handle;
@@ -38,11 +40,14 @@ int main(void) {
     CHECK(redline_fs_read(handle, readback, 4) == 4);
     CHECK(memcmp(readback, "SAVE", 4) == 0);
     CHECK(redline_fs_truncate(handle, 4) == 0);
+    CHECK(redline_fs_set_times(handle, NULL, &accessed_time, &modified_time) == 0);
     CHECK(redline_fs_sync(handle) == 0);
     CHECK(redline_fs_close(handle) == 0);
 
     CHECK(redline_fs_stat(file, &info) == 0);
     CHECK(info.size == 4 && !info.is_directory);
+    CHECK(info.accessed_seconds == accessed_time.seconds);
+    CHECK(info.modified_seconds == modified_time.seconds);
     CHECK(redline_fs_stat(subdir, &info) == 0 && info.is_directory);
 
     dir = redline_fs_dir_open(root);
