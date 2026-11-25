@@ -5,16 +5,23 @@
  * Drive letters (D:, T:, U:, Z: ...) resolve through symbolic links the title creates with IoCreateSymbolicLink;
  * D: defaults to the disc. File handles are small kernel objects whose index points into g_files.
  */
-#include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
 #include <errno.h>
+#include <stdint.h>
 
 #include "xbox.h"
 #include "host_path.h"
 #include "host_fs.h"
+
+#ifndef MAX_PATH
+#define MAX_PATH 260
+#endif
+#define FILE_ATTRIBUTE_NORMAL 0x00000080u
+#define FILE_ATTRIBUTE_DIRECTORY 0x00000010u
+typedef struct { uint32_t dwLowDateTime, dwHighDateTime; } RedlineFileTime;
 
 #define STATUS_SUCCESS 0x00000000u
 #define STATUS_NO_MORE_FILES 0x80000006u
@@ -251,18 +258,6 @@ static int host_path(const char *guest, char *out) {
     return dev;
 }
 
-static uint32_t status_from_win32(DWORD e) {
-    switch (e) {
-    case ERROR_FILE_NOT_FOUND: return STATUS_OBJECT_NAME_NOT_FOUND;
-    case ERROR_PATH_NOT_FOUND: return STATUS_OBJECT_PATH_NOT_FOUND;
-    case ERROR_FILE_EXISTS:
-    case ERROR_ALREADY_EXISTS: return STATUS_OBJECT_NAME_COLLISION;
-    case ERROR_ACCESS_DENIED: return STATUS_ACCESS_DENIED;
-    case ERROR_HANDLE_EOF: return STATUS_END_OF_FILE;
-    default: return 0xC0000001u; /* STATUS_UNSUCCESSFUL */
-    }
-}
-
 static uint32_t status_from_errno(int e) {
     switch (e) {
     case ENOENT: return STATUS_OBJECT_NAME_NOT_FOUND;
@@ -292,7 +287,7 @@ static void iosb(uint32_t p, uint32_t status, uint32_t info) {
     M32(p + 4) = info;
 }
 
-static void put_time(uint32_t va, FILETIME t) {
+static void put_time(uint32_t va, RedlineFileTime t) {
     M32(va) = t.dwLowDateTime;
     M32(va + 4) = t.dwHighDateTime;
 }
@@ -321,8 +316,7 @@ static uint32_t open_file(X86Ctx *c, uint32_t out_handle, uint32_t access, uint3
     /* the host calls of an open leave the guest lock (paths are our own copies): an open can take tens of
      * milliseconds (the antivirus looks at the file), and the game opens files while a video plays or a race loads,
      * which held up every other thread, the video's included. One slower than 20 ms is logged. */
-    LARGE_INTEGER q0, q1, qf;
-    QueryPerformanceCounter(&q0);
+    uint64_t started_ns = redline_fs_monotonic_ns();
     RedlineFsInfo host_info;
     gil_release();
     int stat_result = redline_fs_stat(host, &host_info);
@@ -377,8 +371,8 @@ static uint32_t open_file(X86Ctx *c, uint32_t out_handle, uint32_t access, uint3
         h = redline_fs_open(host, fs_flags, 0666);
         int open_error = errno;
         gil_acquire();
-        QueryPerformanceCounter(&q1), QueryPerformanceFrequency(&qf);
-        double ms = (q1.QuadPart - q0.QuadPart) * 1000.0 / qf.QuadPart;
+        uint64_t finished_ns = redline_fs_monotonic_ns();
+        double ms = finished_ns >= started_ns ? (finished_ns - started_ns) / 1000000.0 : 0.0;
         if (ms > 20) fprintf(stderr, "[file] opening %s took %.0f ms\n", guest, ms);
         if (h == (RedlineFsHandle)-1) {
             uint32_t st = status_from_errno(open_error);
@@ -559,11 +553,11 @@ static uint32_t k_NtFlushBuffersFile(X86Ctx *c, const uint32_t *a) {
 
 static FILETIME filetime_from_unix_seconds(int64_t seconds) {
     FILETIME result;
-    ULARGE_INTEGER ticks;
+    uint64_t ticks;
     if (!seconds) { result.dwLowDateTime = result.dwHighDateTime = 0; return result; }
-    ticks.QuadPart = ((uint64_t)(seconds + 11644473600ll)) * 10000000ull;
-    result.dwLowDateTime = ticks.LowPart;
-    result.dwHighDateTime = ticks.HighPart;
+    ticks = ((uint64_t)(seconds + 11644473600ll)) * 10000000ull;
+    result.dwLowDateTime = (uint32_t)ticks;
+    result.dwHighDateTime = (uint32_t)(ticks >> 32);
     return result;
 }
 
@@ -623,7 +617,7 @@ static uint32_t k_NtSetInformationFile(X86Ctx *c, const uint32_t *a) {
     /* (FileHandle, IoStatusBlock, FileInformation, Length, FileInformationClass) */
     HFile *f = file_of(a[0]);
     if (!f) return STATUS_INVALID_HANDLE;
-    LARGE_INTEGER v;
+    int64_t v;
     switch (a[4]) {
     case 4: { /* FileBasicInformation: 0 or -1 = leave as is. */
         RedlineFsTime times[3];
@@ -640,18 +634,18 @@ static uint32_t k_NtSetInformationFile(X86Ctx *c, const uint32_t *a) {
         break;
     }
     case 14: /* FilePositionInformation */
-        v.QuadPart = (LONGLONG)M64(a[2]);
-        redline_fs_seek(f->h, v.QuadPart, SEEK_SET);
+        v = (int64_t)M64(a[2]);
+        redline_fs_seek(f->h, v, SEEK_SET);
         break;
     case 19:   /* FileAllocationInformation */
     case 20: { /* FileEndOfFileInformation */
         RedlineFsInfo size;
-        v.QuadPart = (LONGLONG)M64(a[2]);
-        if (v.QuadPart < 0) return STATUS_INVALID_PARAMETER;
+        v = (int64_t)M64(a[2]);
+        if (v < 0) return STATUS_INVALID_PARAMETER;
         if (a[4] == 19 && (!f->host[0] || redline_fs_stat(f->host, &size) ||
-                           (uint64_t)v.QuadPart >= size.size)) break;
-        if (a[4] == 20) f->has_eof = 1, f->eof = v.QuadPart;
-        if (f->h != (RedlineFsHandle)-1) redline_fs_truncate(f->h, (uint64_t)v.QuadPart);
+                           (uint64_t)v >= size.size)) break;
+        if (a[4] == 20) f->has_eof = 1, f->eof = v;
+        if (f->h != (RedlineFsHandle)-1) redline_fs_truncate(f->h, (uint64_t)v);
         break;
     }
     case 13: /* FileDispositionInformation: delete when closed */
