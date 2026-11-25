@@ -21,7 +21,9 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Inspect the existing build script and the main platform-specific runtime files.
 - [x] Inventory the main Win32, Direct3D, WASAPI, and x86-64 assumptions across the runtime and build/lifter sources (see `ANDROID_PORT_AUDIT.md`).
 - [x] Identify initial AArch64 blockers in the CPU/lifter interface (see `ANDROID_ARM64_CPU_AUDIT.md`); full generated-code compatibility remains unverified.
-- [ ] Design a platform abstraction boundary before replacing platform APIs.
+- [x] Define an initial isolated host packed-float SIMD abstraction for x64 SSE2 and ARM64 NEON (`runtime/host_simd.h`). It is not wired into `x86.h` yet: the separate MMX/SSE2 integer helper must be ported first (see `ANDROID_SIMD_COMPATIBILITY.md`).
+- [ ] Integrate and test the SIMD abstraction with the lifter output and complete the MMX integer path.
+- [ ] Design the remaining platform abstraction boundaries before replacing platform APIs.
 - [ ] Add an Android NDK/Gradle skeleton only after the native entry points and graphics strategy are known.
 - [ ] Port and test one subsystem at a time: startup/filesystem, input, audio, graphics, then game runtime.
 - [ ] Build and test an ARM64 APK on a physical Android device.
