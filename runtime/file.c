@@ -111,13 +111,20 @@ static void mod_walk(const char *dir, const char *rel, int mod, int *cap) {
         if (entry.is_directory) {
             mod_walk(sub, subrel, mod, cap);
         } else {
-            if (g_nmodfiles == *cap)
-                g_modfiles = realloc(g_modfiles, (*cap = *cap ? *cap * 2 : 256) * sizeof *g_modfiles);
-            if (!g_modfiles) {
-                g_nmodfiles = *cap = 0;
+            if (g_nmodfiles == *cap) {
+                int next_cap = *cap ? *cap * 2 : 256;
+                ModFile *grown = realloc(g_modfiles, (size_t)next_cap * sizeof *g_modfiles);
+                if (!grown) break;
+                g_modfiles = grown;
+                *cap = next_cap;
+            }
+            char *rel_copy = _strdup(subrel), *host_copy = _strdup(sub);
+            if (!rel_copy || !host_copy) {
+                free(rel_copy);
+                free(host_copy);
                 break;
             }
-            g_modfiles[g_nmodfiles++] = (ModFile){_strdup(subrel), _strdup(sub), mod};
+            g_modfiles[g_nmodfiles++] = (ModFile){rel_copy, host_copy, mod};
         }
     }
     redline_fs_dir_close(h);
