@@ -165,3 +165,14 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Use a shared tested registry-removal helper with swap-delete semantics; tests cover middle/first/last removal, missing objects, null inputs, and invalid counts.
 - [x] Android NDK, native ARM64, and Windows CI passed in workflow run 45527094973 (all three jobs successful).
 - [ ] Kernel guest memory itself remains bump-allocated and is not reused. Reusing raw guest object addresses without generation-tagged handles could make stale handles alias new objects, so physical reclamation is deferred until the handle ABI can safely distinguish generations.
+
+
+## Guest thread and wait reference lifetime
+
+- [x] Guest worker threads hold an execution reference until guest code exits, separate from the caller's handle reference.
+- [x] Main guest execution releases its execution reference when it returns.
+- [x] Dispatcher waits pin every requested object while blocked and release those references on success, timeout, or wait completion.
+- [x] Pure reference-count tests cover closing a thread handle while execution continues and retaining an object while a waiter holds a temporary reference.
+- [x] Android NDK, native ARM64, and Windows checks passed in workflow run 45527094973.
+- [ ] Raw object-address handles still cannot distinguish a closed handle from another live reference to the same object. A true handle table and exact Xbox ABI validation remain necessary.
+- [ ] Kernel guest memory is still bump-allocated; logical destruction does not reclaim or reuse the guest address. Safe reuse is deferred until generation-aware handles are implemented.
