@@ -58,6 +58,8 @@ const char *guest_path_root(void);
 uint32_t thread_env_init(X86Ctx *c, uint32_t stack_size, uint32_t tls_size);
 void thread_run_main(X86Ctx *c, uint32_t entry);
 uint32_t current_thread(X86Ctx *c);
+uint32_t thread_handle_create(uint32_t object, uint8_t type);
+uint32_t thread_handle_object(X86Ctx *c, uint32_t handle);
 void gil_acquire(void);
 void thread_name(const char *fmt, ...);
 void profile_stacks(const char *const *names, int n); /* profile.c: host stacks of the named threads (HITCHLOG) */
