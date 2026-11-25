@@ -2,7 +2,8 @@
  *
  * Every guest thread is a host thread, but only the holder of g_gil runs guest code: lifted code is not
  * safe to run concurrently (the Xbox had one CPU). Blocking kernel calls drop the lock while they wait.
- * Waitable objects live in guest memory as DISPATCHER_HEADERs, and a handle is the object's guest address.
+ * Waitable objects live in guest memory as DISPATCHER_HEADERs; opaque guest HANDLE tokens resolve through a
+ * generation-tagged table, while Ke* entry points continue to consume direct guest object pointers.
  */
 #include "host_fs.h"
 #include <setjmp.h>
