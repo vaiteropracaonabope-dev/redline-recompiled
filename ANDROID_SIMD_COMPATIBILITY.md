@@ -15,6 +15,14 @@ Status: source audit complete; no ARM64 implementation has been merged yet.
 
 This is valuable groundwork, but `mmx_ref()` is currently private to `runtime.c` and uses helper types/constants declared in `x86.h`. It cannot simply be selected by the lifted DLL without reorganizing the interface. The self-test currently validates the SSE2 implementation on the existing Windows x64 target; it is not evidence of an ARM64 build.
 
+## Implementation now present on `android-port`
+
+- `runtime/host_simd.h` now maps the packed-float intrinsic names emitted by the lifter to NEON on AArch64 and keeps SSE2 aliases on x64.
+- `runtime/x86.h` now selects a scalar lane-by-lane MMX implementation on AArch64 and retains the original SSE2 implementation on x64. The scalar implementation is based on the existing reference in `runtime/runtime.c`; that independent reference and its startup differential test remain in place.
+- The SIMD abstraction is included by `x86.h`, so the lifter's emitted `__m128` declarations and packed-float intrinsic calls have an ARM64 host representation.
+
+This is source-level integration only. It has not yet been compiled with an Android NDK/ARM64 toolchain. The existing runtime is still Windows-specific, so this does not produce an Android executable or APK.
+
 ## Safe implementation order
 
 1. Introduce a host SIMD abstraction with a stable 128-bit float-vector type and load/store helpers. Keep the current SSE2 implementation selected for Windows x64.
