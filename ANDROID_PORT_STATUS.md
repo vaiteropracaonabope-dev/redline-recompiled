@@ -176,3 +176,23 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Android NDK, native ARM64, and Windows checks passed in workflow run 45527094973.
 - [ ] Raw object-address handles still cannot distinguish a closed handle from another live reference to the same object. A true handle table and exact Xbox ABI validation remain necessary.
 - [ ] Kernel guest memory is still bump-allocated; logical destruction does not reclaim or reuse the guest address. Safe reuse is deferred until generation-aware handles are implemented.
+
+
+## Generation-tagged guest handle groundwork
+
+- [x] Audit the current handle/object boundaries in `runtime/thread.c`, `runtime/file.c`, `runtime/xbox.h`, `runtime/main.c`, and `runtime/kernel.c`.
+- [x] Confirm that `KeWaitForSingleObject` / `KeWaitForMultipleObjects` consume dispatcher-object pointers, while the corresponding `NtWaitFor*` entry points consume handles; keep these API families separate during any future migration.
+- [x] Inventory current handle producers: `NtCreateEvent`, `NtCreateSemaphore`, `NtCreateMutant`, `PsCreateSystemThreadEx`, `NtCreateFile`, and `NtOpenFile`. They currently return guest object addresses.
+- [x] Inventory handle consumers in the thread HLE: `NtResumeThread`, `NtWaitForSingleObject`, `NtWaitForSingleObjectEx`, `NtWaitForMultipleObjectsEx`, `NtSetEvent`, `NtClearEvent`, `NtReleaseSemaphore`, `NtReleaseMutant`, `NtClose`, `NtDuplicateObject`, and `ObReferenceObjectByHandle`.
+- [x] Inventory file-handle consumers: `NtReadFile`, `NtWriteFile`, `NtFlushBuffersFile`, `NtQueryInformationFile`, `NtSetInformationFile`, `NtQueryVolumeInformationFile`, `NtQueryDirectoryFile`, and related file HLE paths currently resolve handles as raw object addresses. `OBJECT_ATTRIBUTES.RootDirectory` also passes through file-object lookup.
+- [x] Separate pointer-based paths that must not be translated as handles: `KeWaitFor*`, `KeSetEvent`, timer initialization/operations, and `ObfDereferenceObject` operate on guest object pointers.
+- [x] Add isolated generation-tagged 32-bit handle-table primitives in `runtime/guest_handle_table.h`. The encoding uses a 10-bit nonzero slot field and a 22-bit generation; the current-thread pseudo-handle and invalid-handle sentinel remain reserved. Slots retire rather than wrap their generation, preventing stale-handle aliasing.
+- [x] Add tests for insertion, lookup, type checks, duplicate handles, close, double-close rejection, stale-generation rejection after slot reuse, invalid inputs, and capacity exhaustion in `tests/guest_handle_table.c`.
+- [x] Add Android NDK syntax validation, native ARM64 execution, and Windows execution for the isolated handle-table tests in CI.
+- [ ] **Not integrated into the HLE yet.** The helper is deliberately isolated: switching producers to opaque handles before migrating every consumer would break the current ABI assumptions and game calls.
+- [ ] Confirm the exact retail Xbox ABI and behavior for `NtDuplicateObject`, `ObReferenceObjectByHandle`, `NtClose`, and object-creation exports before wiring the table. The public Xbox export map identifies `NtDuplicateObject@12` (three stack arguments) but does not establish the argument semantics or the runtime handle encoding. Do not infer those details from the export decoration alone.
+- [ ] Integrate a single handle resolver for all `Nt*` handle-taking APIs and file HLE operations, while preserving direct object pointers for `Ke*` and `ObfDereferenceObject`; explicitly handle `NT_CURRENT_THREAD`.
+- [ ] Only reclaim guest object memory after handle references, object-pointer references, wait pins, and any guest-visible raw pointers are accounted for. `kernel_alloc` is currently a bump allocator and does not support freeing kernel allocations.
+- [ ] Add guest-runtime tests for stale handles, duplicate/close races, wait-any/wait-all, file-handle operations, and thread lifetime before enabling address reuse.
+
+Audit references: [Xbox kernel export map](https://xboxdevwiki.net/Kernel), [OpenXDK export definitions](https://github.com/XboxDev/OpenXDK/blob/master/src/xboxkrnl/xboxkrnl.exe.def), [KeWaitForSingleObject object-pointer contract](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-kewaitforsingleobject), [ObReferenceObjectByHandle handle-to-object contract](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-obreferenceobjectbyhandle).
