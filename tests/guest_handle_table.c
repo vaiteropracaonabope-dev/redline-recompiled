@@ -10,6 +10,8 @@ static void test_insert_lookup_and_type(void) {
     assert(handle && handle != 0xB0001020u && handle != REDLINE_GUEST_HANDLE_CURRENT_THREAD);
     assert(redline_guest_handle_lookup(&table, handle, 0, &object) && object == 0xB0001020u);
     assert(redline_guest_handle_lookup(&table, handle, 6, &object));
+    assert(redline_guest_handle_insert(&table, 0xB0001030u, 0, &handle));
+    assert(redline_guest_handle_lookup(&table, handle, 0, &object) && object == 0xB0001030u);
     assert(!redline_guest_handle_lookup(&table, handle, 5, &object));
     assert(!redline_guest_handle_lookup(&table, 0, 0, &object));
     assert(!redline_guest_handle_lookup(&table, REDLINE_GUEST_HANDLE_CURRENT_THREAD, 0, &object));
