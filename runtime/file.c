@@ -13,6 +13,7 @@
 
 #include "xbox.h"
 #include "host_path.h"
+#include "host_fs.h"
 
 #define STATUS_SUCCESS 0x00000000u
 #define STATUS_NO_MORE_FILES 0x80000006u
@@ -89,26 +90,38 @@ typedef struct {
 static ModFile *g_modfiles;
 static int g_nmodfiles;
 
-static void mod_walk(const char *dir, const char *rel, int mod, int *cap) {
-    char pat[MAX_PATH];
-    WIN32_FIND_DATAA fd;
-    snprintf(pat, sizeof pat, "%s\\*", dir);
-    HANDLE h = FindFirstFileA(pat, &fd);
-    if (h == INVALID_HANDLE_VALUE) return;
-    do {
-        if (!strcmp(fd.cFileName, ".") || !strcmp(fd.cFileName, "..")) continue;
-        char sub[MAX_PATH], subrel[MAX_PATH];
-        snprintf(sub, sizeof sub, "%s\\%s", dir, fd.cFileName);
-        snprintf(subrel, sizeof subrel, "%s\\%s", rel, fd.cFileName);
-        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) mod_walk(sub, subrel, mod, cap);
-        else {
-            if (g_nmodfiles == *cap) g_modfiles = realloc(g_modfiles, (*cap = *cap ? *cap * 2 : 256) * sizeof *g_modfiles);
-            g_modfiles[g_nmodfiles++] = (ModFile){_strdup(subrel), _strdup(sub), mod};
-        }
-    } while (FindNextFileA(h, &fd));
-    FindClose(h);
+/* Host paths use forward slashes here (accepted by Win32 too); guest-relative mod
+ * keys retain Xbox backslashes for the existing case-insensitive lookup. */
+static int mod_host_join(char *out, size_t cap, const char *base, const char *name) {
+    int n = snprintf(out, cap, "%s/%s", base, name);
+    return n >= 0 && (size_t)n < cap;
 }
 
+static void mod_walk(const char *dir, const char *rel, int mod, int *cap) {
+    RedlineFsDirHandle h = redline_fs_dir_open(dir);
+    RedlineFsDirEntry entry;
+    int next;
+    if (!h) return;
+    while ((next = redline_fs_dir_read(h, &entry)) > 0) {
+        if (!strcmp(entry.name, ".") || !strcmp(entry.name, "..")) continue;
+        char sub[MAX_PATH], subrel[MAX_PATH];
+        if (!mod_host_join(sub, sizeof sub, dir, entry.name)) continue;
+        int n = snprintf(subrel, sizeof subrel, "%s\\%s", rel, entry.name);
+        if (n < 0 || (size_t)n >= sizeof subrel) continue;
+        if (entry.is_directory) {
+            mod_walk(sub, subrel, mod, cap);
+        } else {
+            if (g_nmodfiles == *cap)
+                g_modfiles = realloc(g_modfiles, (*cap = *cap ? *cap * 2 : 256) * sizeof *g_modfiles);
+            if (!g_modfiles) {
+                g_nmodfiles = *cap = 0;
+                break;
+            }
+            g_modfiles[g_nmodfiles++] = (ModFile){_strdup(subrel), _strdup(sub), mod};
+        }
+    }
+    redline_fs_dir_close(h);
+}
 static int modfile_cmp(const void *a, const void *b) {
     const ModFile *x = a, *y = b;
     int c = _stricmp(x->rel, y->rel);
@@ -127,36 +140,36 @@ static const char *mod_key(int i) { /* mod_<name>, with anything but letters and
 static void mods_init(void) {
     if (g_nmods >= 0) return;
     g_nmods = 0;
-    char dir[MAX_PATH], pat[MAX_PATH];
-    snprintf(dir, sizeof dir, "%s\\..\\mods", guest_path_root());
-    CreateDirectoryA(dir, NULL); /* there to be seen: where mods go */
-    snprintf(pat, sizeof pat, "%s\\*", dir);
-    WIN32_FIND_DATAA fd;
-    HANDLE h = FindFirstFileA(pat, &fd);
-    if (h == INVALID_HANDLE_VALUE) return;
-    do
-        if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && fd.cFileName[0] != '.' && g_nmods < MAX_MODS &&
-            strlen(fd.cFileName) < sizeof g_mod_name[0])
-            strcpy(g_mod_name[g_nmods++], fd.cFileName);
-    while (FindNextFileA(h, &fd));
-    FindClose(h);
+    char dir[MAX_PATH];
+    int n = snprintf(dir, sizeof dir, "%s/../mods", guest_path_root());
+    if (n < 0 || (size_t)n >= sizeof dir) return;
+    redline_fs_mkdir(dir, 0777); /* there to be seen: where mods go */
+    RedlineFsDirHandle h = redline_fs_dir_open(dir);
+    RedlineFsDirEntry entry;
+    int next;
+    if (!h) return;
+    while ((next = redline_fs_dir_read(h, &entry)) > 0) {
+        if (entry.is_directory && entry.name[0] != '.' && g_nmods < MAX_MODS &&
+            strlen(entry.name) < sizeof g_mod_name[0])
+            strcpy(g_mod_name[g_nmods++], entry.name);
+    }
+    redline_fs_dir_close(h);
     qsort(g_mod_name, g_nmods, sizeof g_mod_name[0], name_cmp);
     int cap = 0;
     for (int i = 0; i < g_nmods; i++) {
         int on = cfg_saved(mod_key(i), 1);
-        fprintf(stderr, "[mods] %s: %s\n", g_mod_name[i], on ? "on" : "off");
+        fprintf(stderr, "[mods] %s: %s\\n", g_mod_name[i], on ? "on" : "off");
         if (!on) continue;
         char sub[MAX_PATH];
-        snprintf(sub, sizeof sub, "%s\\%s", dir, g_mod_name[i]);
-        mod_walk(sub, "", i, &cap);
+        if (mod_host_join(sub, sizeof sub, dir, g_mod_name[i])) mod_walk(sub, "", i, &cap);
     }
     qsort(g_modfiles, g_nmodfiles, sizeof *g_modfiles, modfile_cmp);
-    int n = 0; /* one per path: the first mod's */
+    int unique = 0; /* one per path: the first mod's */
     for (int i = 0; i < g_nmodfiles; i++)
-        if (!n || _stricmp(g_modfiles[n - 1].rel, g_modfiles[i].rel)) g_modfiles[n++] = g_modfiles[i];
-    g_nmodfiles = n;
+        if (!unique || _stricmp(g_modfiles[unique - 1].rel, g_modfiles[i].rel))
+            g_modfiles[unique++] = g_modfiles[i];
+    g_nmodfiles = unique;
 }
-
 int mods_count(void) { return mods_init(), g_nmods; }
 const char *mods_name(int i) { return i >= 0 && i < mods_count() ? g_mod_name[i] : ""; }
 int mods_on(int i) { return i >= 0 && i < mods_count() && cfg_saved(mod_key(i), 1); } /* as saved: next start */
