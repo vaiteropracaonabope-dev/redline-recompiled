@@ -133,4 +133,4 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Make wait-all account for duplicate handles: repeated semaphore handles require multiple tokens, while a synchronization event/timer cannot be consumed twice from one signal.
 - [x] Reject zero or over-limit multi-object wait counts rather than silently truncating them.
 - [ ] Abandoned-mutant handling when a guest thread exits, full object-handle validation/closing, and runtime stress tests remain open.
-- [ ] New dispatcher semantics tests are wired into Android NDK, native ARM64, and Windows CI; await the workflow result before treating them as validated.
+- [x] Dispatcher semantics tests passed on Android NDK, native ARM64, and Windows CI; final validation is workflow run 45525897147 (all three jobs successful).
