@@ -45,6 +45,8 @@ jobs:
         run: /tmp/host-fs-test
       - name: Run POSIX synchronization test
         run: /tmp/host-sync-test
+      - name: Run POSIX host thread test
+        run: /tmp/host-thread-test
 
   windows-backend-check:
     runs-on: windows-latest
