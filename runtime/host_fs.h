@@ -18,7 +18,14 @@ typedef intptr_t RedlineFsHandle;
 typedef intptr_t RedlineFsDirHandle;
 
 typedef struct {
+    int64_t seconds;
+    uint32_t nanoseconds;
+} RedlineFsTime;
+
+typedef struct {
     uint64_t size;
+    int64_t created_seconds;
+    int64_t accessed_seconds;
     int64_t modified_seconds;
     uint32_t modified_nanoseconds;
     uint32_t mode;
@@ -41,6 +48,8 @@ int64_t redline_fs_seek(RedlineFsHandle handle, int64_t offset, int whence);
 int redline_fs_truncate(RedlineFsHandle handle, uint64_t size);
 int redline_fs_sync(RedlineFsHandle handle);
 int redline_fs_stat(const char *path, RedlineFsInfo *info);
+int redline_fs_set_times(RedlineFsHandle handle, const RedlineFsTime *created,
+                         const RedlineFsTime *accessed, const RedlineFsTime *modified);
 int redline_fs_mkdir(const char *path, unsigned mode);
 int redline_fs_unlink(const char *path);
 int redline_fs_rmdir(const char *path);
