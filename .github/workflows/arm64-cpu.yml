@@ -46,4 +46,6 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
       - name: Compile Windows filesystem backend
         shell: cmd
-        run: cl /nologo /W3 /WX /c /Iruntime runtime\host_fs_win32.c /Fo:host_fs_win32.obj
+        run: |
+          cl /nologo /W3 /WX /Iruntime runtime\host_fs_win32.c tests\host_fs_win32.c /Fe:host-fs-win32-test.exe
+          host-fs-win32-test.exe
