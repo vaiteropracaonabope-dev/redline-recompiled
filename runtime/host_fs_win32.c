@@ -152,6 +152,12 @@ int redline_fs_sync(RedlineFsHandle handle) {
     return -1;
 }
 
+uint64_t redline_fs_monotonic_ns(void) {
+    LARGE_INTEGER counter, frequency;
+    if (!QueryPerformanceFrequency(&frequency) || !QueryPerformanceCounter(&counter)) return 0;
+    return (uint64_t)((counter.QuadPart * 1000000000ull) / (uint64_t)frequency.QuadPart);
+}
+
 int redline_fs_stat(const char *path, RedlineFsInfo *info) {
     WIN32_FILE_ATTRIBUTE_DATA data;
     if (!info) { errno = EINVAL; return -1; }
