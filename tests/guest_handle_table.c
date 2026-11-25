@@ -73,12 +73,60 @@ static void test_capacity_and_invalid_inputs(void) {
     assert(!redline_guest_handle_close(&table, REDLINE_GUEST_HANDLE_CURRENT_THREAD, &object, &type));
 }
 
+
+static void test_duplicate_rejects_stale_and_invalid(void) {
+    RedlineGuestHandleTable table;
+    uint32_t handle = 0, duplicate = 0, object = 0;
+    uint8_t type = 0;
+    redline_guest_handles_init(&table);
+    assert(!redline_guest_handle_insert(NULL, 1, 1, &handle));
+    assert(!redline_guest_handle_lookup(NULL, 1, 0, &object));
+    assert(!redline_guest_handle_close(NULL, 1, &object, &type));
+    assert(!redline_guest_handle_duplicate(NULL, 1, &duplicate));
+    assert(!redline_guest_handle_duplicate(&table, 0, &duplicate));
+    assert(!redline_guest_handle_duplicate(&table, 1, NULL));
+    assert(redline_guest_handle_insert(&table, 0xB0006000u, 3, &handle));
+    assert(redline_guest_handle_close(&table, handle, &object, &type));
+    assert(!redline_guest_handle_duplicate(&table, handle, &duplicate));
+}
+
+static void test_generation_exhaustion_retires_slot(void) {
+    RedlineGuestHandleTable table;
+    uint32_t final_handle = 0, next_handle = 0, object = 0;
+    uint8_t type = 0;
+    redline_guest_handles_init(&table);
+    table.entries[0].generation = REDLINE_GUEST_HANDLE_MAX_GENERATION;
+    assert(redline_guest_handle_insert(&table, 0xB0007000u, 4, &final_handle));
+    assert((final_handle & REDLINE_GUEST_HANDLE_SLOT_MASK) == 1u);
+    assert(redline_guest_handle_close(&table, final_handle, &object, &type));
+    assert(table.entries[0].retired);
+    assert(redline_guest_handle_insert(&table, 0xB0007010u, 4, &next_handle));
+    assert((next_handle & REDLINE_GUEST_HANDLE_SLOT_MASK) == 2u);
+    assert(!redline_guest_handle_lookup(&table, final_handle, 0, &object));
+}
+
+static void test_reserved_invalid_handle_values(void) {
+    RedlineGuestHandleTable table;
+    uint32_t object = 0, handle = 0;
+    uint8_t type = 0;
+    redline_guest_handles_init(&table);
+    assert(!redline_guest_handle_lookup(&table, UINT32_MAX, 0, &object));
+    assert(!redline_guest_handle_close(&table, UINT32_MAX, &object, &type));
+    assert(!redline_guest_handle_lookup(&table, REDLINE_GUEST_HANDLE_CURRENT_THREAD, 0, &object));
+    assert(!redline_guest_handle_close(&table, REDLINE_GUEST_HANDLE_CURRENT_THREAD, &object, &type));
+    assert(redline_guest_handle_insert(&table, 0xB0008000u, 1, &handle));
+    assert(!redline_guest_handle_lookup(&table, handle, 2, &object));
+}
+
 int main(void) {
     test_insert_lookup_and_type();
     test_duplicate_and_close();
     test_stale_generation_after_slot_reuse();
     test_special_namespace_is_reserved();
     test_capacity_and_invalid_inputs();
+    test_duplicate_rejects_stale_and_invalid();
+    test_generation_exhaustion_retires_slot();
+    test_reserved_invalid_handle_values();
     puts("generation-tagged guest handle table tests passed");
     return 0;
 }
