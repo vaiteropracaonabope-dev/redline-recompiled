@@ -385,7 +385,7 @@ enum {
 #if defined(__aarch64__) || defined(_M_ARM64)
 /* Portable scalar MMX implementation for ARM64. The independent mmx_ref()
  * in runtime.c remains the differential test oracle. */
-static inline int redline_mmx_redline_mmx_sat(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
+static inline int redline_mmx_sat(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 static inline uint64_t mmx(int op, uint64_t qa, uint64_t qb) {
     Mmx a = {qa}, b = {qb}, r = {0};
     uint64_t n = qb; /* shift count */
@@ -399,14 +399,14 @@ static inline uint64_t mmx(int op, uint64_t qa, uint64_t qb) {
     case MX_PSUBW: for (i = 0; i < 4; i++) r.w[i] = a.w[i] - b.w[i]; break;
     case MX_PSUBD: for (i = 0; i < 2; i++) r.d[i] = a.d[i] - b.d[i]; break;
     case MX_PSUBQ: r.q = a.q - b.q; break;
-    case MX_PADDSB: for (i = 0; i < 8; i++) r.sb[i] = (int8_t)sat(a.sb[i] + b.sb[i], -128, 127); break;
-    case MX_PADDSW: for (i = 0; i < 4; i++) r.sw[i] = (int16_t)sat(a.sw[i] + b.sw[i], -32768, 32767); break;
-    case MX_PADDUSB: for (i = 0; i < 8; i++) r.b[i] = (uint8_t)sat(a.b[i] + b.b[i], 0, 255); break;
-    case MX_PADDUSW: for (i = 0; i < 4; i++) r.w[i] = (uint16_t)sat(a.w[i] + b.w[i], 0, 65535); break;
-    case MX_PSUBSB: for (i = 0; i < 8; i++) r.sb[i] = (int8_t)sat(a.sb[i] - b.sb[i], -128, 127); break;
-    case MX_PSUBSW: for (i = 0; i < 4; i++) r.sw[i] = (int16_t)sat(a.sw[i] - b.sw[i], -32768, 32767); break;
-    case MX_PSUBUSB: for (i = 0; i < 8; i++) r.b[i] = (uint8_t)sat(a.b[i] - b.b[i], 0, 255); break;
-    case MX_PSUBUSW: for (i = 0; i < 4; i++) r.w[i] = (uint16_t)sat(a.w[i] - b.w[i], 0, 65535); break;
+    case MX_PADDSB: for (i = 0; i < 8; i++) r.sb[i] = (int8_t)redline_mmx_sat(a.sb[i] + b.sb[i], -128, 127); break;
+    case MX_PADDSW: for (i = 0; i < 4; i++) r.sw[i] = (int16_t)redline_mmx_sat(a.sw[i] + b.sw[i], -32768, 32767); break;
+    case MX_PADDUSB: for (i = 0; i < 8; i++) r.b[i] = (uint8_t)redline_mmx_sat(a.b[i] + b.b[i], 0, 255); break;
+    case MX_PADDUSW: for (i = 0; i < 4; i++) r.w[i] = (uint16_t)redline_mmx_sat(a.w[i] + b.w[i], 0, 65535); break;
+    case MX_PSUBSB: for (i = 0; i < 8; i++) r.sb[i] = (int8_t)redline_mmx_sat(a.sb[i] - b.sb[i], -128, 127); break;
+    case MX_PSUBSW: for (i = 0; i < 4; i++) r.sw[i] = (int16_t)redline_mmx_sat(a.sw[i] - b.sw[i], -32768, 32767); break;
+    case MX_PSUBUSB: for (i = 0; i < 8; i++) r.b[i] = (uint8_t)redline_mmx_sat(a.b[i] - b.b[i], 0, 255); break;
+    case MX_PSUBUSW: for (i = 0; i < 4; i++) r.w[i] = (uint16_t)redline_mmx_sat(a.w[i] - b.w[i], 0, 65535); break;
     case MX_PMULLW: for (i = 0; i < 4; i++) r.w[i] = (uint16_t)(a.sw[i] * b.sw[i]); break;
     case MX_PMULHW: for (i = 0; i < 4; i++) r.w[i] = (uint16_t)((a.sw[i] * b.sw[i]) >> 16); break;
     case MX_PMULHUW: for (i = 0; i < 4; i++) r.w[i] = (uint16_t)(((uint32_t)a.w[i] * b.w[i]) >> 16); break;
@@ -427,9 +427,9 @@ static inline uint64_t mmx(int op, uint64_t qa, uint64_t qb) {
     case MX_PUNPCKHWD: for (i = 0; i < 2; i++) r.w[2 * i] = a.w[i + 2], r.w[2 * i + 1] = b.w[i + 2]; break;
     case MX_PUNPCKLDQ: r.d[0] = a.d[0]; r.d[1] = b.d[0]; break;
     case MX_PUNPCKHDQ: r.d[0] = a.d[1]; r.d[1] = b.d[1]; break;
-    case MX_PACKSSWB: for (i = 0; i < 4; i++) r.sb[i] = (int8_t)sat(a.sw[i], -128, 127), r.sb[i + 4] = (int8_t)sat(b.sw[i], -128, 127); break;
-    case MX_PACKSSDW: for (i = 0; i < 2; i++) r.sw[i] = (int16_t)sat(a.sd[i], -32768, 32767), r.sw[i + 2] = (int16_t)sat(b.sd[i], -32768, 32767); break;
-    case MX_PACKUSWB: for (i = 0; i < 4; i++) r.b[i] = (uint8_t)sat(a.sw[i], 0, 255), r.b[i + 4] = (uint8_t)sat(b.sw[i], 0, 255); break;
+    case MX_PACKSSWB: for (i = 0; i < 4; i++) r.sb[i] = (int8_t)redline_mmx_sat(a.sw[i], -128, 127), r.sb[i + 4] = (int8_t)redline_mmx_sat(b.sw[i], -128, 127); break;
+    case MX_PACKSSDW: for (i = 0; i < 2; i++) r.sw[i] = (int16_t)redline_mmx_sat(a.sd[i], -32768, 32767), r.sw[i + 2] = (int16_t)redline_mmx_sat(b.sd[i], -32768, 32767); break;
+    case MX_PACKUSWB: for (i = 0; i < 4; i++) r.b[i] = (uint8_t)redline_mmx_sat(a.sw[i], 0, 255), r.b[i + 4] = (uint8_t)redline_mmx_sat(b.sw[i], 0, 255); break;
     case MX_PAVGB: for (i = 0; i < 8; i++) r.b[i] = (uint8_t)((a.b[i] + b.b[i] + 1) >> 1); break;
     case MX_PAVGW: for (i = 0; i < 4; i++) r.w[i] = (uint16_t)((a.w[i] + b.w[i] + 1) >> 1); break;
     case MX_PMINUB: for (i = 0; i < 8; i++) r.b[i] = a.b[i] < b.b[i] ? a.b[i] : b.b[i]; break;
