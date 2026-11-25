@@ -97,7 +97,12 @@ void render_anisotropy(int n);   /* render.c: anisotropic filtering of linear-fi
 void render_fsr(int on);         /* render.c: FSR 1 when the frame is smaller than the window's picture, else bilinear */
 void render_motion(int on);      /* render.c: the scene writes motion vectors and jitters, for DLSS and FSR 3 */
 float render_widen(void);        /* render.c: ULTRAWIDE, how much wider than 16:9 the picture is (1: not) */
-__declspec(noreturn) void fatal_exit(int code); /* main.c: the game stops on an error and tells the player why */
+#ifdef _MSC_VER
+#define REDLINE_NORETURN __declspec(noreturn)
+#else
+#define REDLINE_NORETURN __attribute__((noreturn))
+#endif
+REDLINE_NORETURN void fatal_exit(int code); /* main.c: the game stops on an error and tells the player why */
 void render_texpack(int on);     /* render.c: texture packs in textures\ next to the exe (texpack.c) */
 void render_menusides(int on);   /* render.c: MENU SIDES, with ULTRAWIDE: 2D screens' sides filled (1) or black */
 void render_texdump(int on);     /* render.c: write each new texture to textures\dump, for making packs */
