@@ -557,16 +557,26 @@ static uint32_t k_NtFlushBuffersFile(X86Ctx *c, const uint32_t *a) {
 
 /* ---------------- information ---------------- */
 
-static void network_open_info(uint32_t va, const WIN32_FILE_ATTRIBUTE_DATA *d) {
-    put_time(va + 0x00, d->ftCreationTime);
-    put_time(va + 0x08, d->ftLastAccessTime);
-    put_time(va + 0x10, d->ftLastWriteTime);
-    put_time(va + 0x18, d->ftLastWriteTime);
-    uint64_t size = ((uint64_t)d->nFileSizeHigh << 32) | d->nFileSizeLow;
-    M64(va + 0x20) = (size + 4095) & ~4095ull;
-    M64(va + 0x28) = size;
-    M32(va + 0x30) = d->dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_READONLY) ? d->dwFileAttributes
-                                                                                                 : FILE_ATTRIBUTE_NORMAL;
+static FILETIME filetime_from_unix_seconds(int64_t seconds) {
+    FILETIME result;
+    ULARGE_INTEGER ticks;
+    ticks.QuadPart = ((uint64_t)(seconds + 11644473600ll)) * 10000000ull;
+    result.dwLowDateTime = ticks.LowPart;
+    result.dwHighDateTime = ticks.HighPart;
+    return result;
+}
+
+static void network_open_info(uint32_t va, const RedlineFsInfo *info) {
+    FILETIME created = filetime_from_unix_seconds(info->created_seconds);
+    FILETIME accessed = filetime_from_unix_seconds(info->accessed_seconds);
+    FILETIME modified = filetime_from_unix_seconds(info->modified_seconds);
+    put_time(va + 0x00, created);
+    put_time(va + 0x08, accessed);
+    put_time(va + 0x10, modified);
+    put_time(va + 0x18, modified);
+    M64(va + 0x20) = (info->size + 4095) & ~4095ull;
+    M64(va + 0x28) = info->size;
+    M32(va + 0x30) = info->is_directory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
     M32(va + 0x34) = 0;
 }
 
@@ -574,18 +584,22 @@ static uint32_t k_NtQueryInformationFile(X86Ctx *c, const uint32_t *a) {
     /* (FileHandle, IoStatusBlock, FileInformation, Length, FileInformationClass) */
     HFile *f = file_of(a[0]);
     if (!f) return STATUS_INVALID_HANDLE;
-    WIN32_FILE_ATTRIBUTE_DATA d;
-    GetFileAttributesExA(f->host, GetFileExInfoStandard, &d);
-    uint64_t size = ((uint64_t)d.nFileSizeHigh << 32) | d.nFileSizeLow;
+    RedlineFsInfo info;
+    if (redline_fs_stat(f->host, &info)) return status_from_errno(errno);
     uint32_t out = a[2], len = 0;
     switch (a[4]) {
-    case 4: /* FileBasicInformation */
-        put_time(out, d.ftCreationTime); put_time(out + 8, d.ftLastAccessTime);
-        put_time(out + 16, d.ftLastWriteTime); put_time(out + 24, d.ftLastWriteTime);
-        M32(out + 32) = d.dwFileAttributes; len = 40;
+    case 4: { /* FileBasicInformation */
+        FILETIME created = filetime_from_unix_seconds(info.created_seconds);
+        FILETIME accessed = filetime_from_unix_seconds(info.accessed_seconds);
+        FILETIME modified = filetime_from_unix_seconds(info.modified_seconds);
+        put_time(out, created); put_time(out + 8, accessed);
+        put_time(out + 16, modified); put_time(out + 24, modified);
+        M32(out + 32) = info.is_directory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
+        len = 40;
         break;
+    }
     case 5: /* FileStandardInformation */
-        M64(out) = (size + 4095) & ~4095ull; M64(out + 8) = size; M32(out + 16) = 1;
+        M64(out) = (info.size + 4095) & ~4095ull; M64(out + 8) = info.size; M32(out + 16) = 1;
         M8(out + 20) = 0; M8(out + 21) = (uint8_t)f->is_dir; len = 24;
         break;
     case 14: { /* FilePositionInformation */
@@ -594,10 +608,10 @@ static uint32_t k_NtQueryInformationFile(X86Ctx *c, const uint32_t *a) {
         break;
     }
     case 34: /* FileNetworkOpenInformation */
-        network_open_info(out, &d); len = 56;
+        network_open_info(out, &info); len = 56;
         break;
     default:
-        fprintf(stderr, "NtQueryInformationFile: class %u not implemented\n", a[4]);
+        fprintf(stderr, "NtQueryInformationFile: class %u not implemented\\n", a[4]);
         exit(4);
     }
     iosb(a[1], STATUS_SUCCESS, len);
@@ -610,25 +624,25 @@ static uint32_t k_NtSetInformationFile(X86Ctx *c, const uint32_t *a) {
     if (!f) return STATUS_INVALID_HANDLE;
     LARGE_INTEGER v;
     switch (a[4]) {
-    case 4: { /* FileBasicInformation: Creation, LastAccess, LastWrite, Change times; 0 or -1 = leave as is.
-               * Installers stamp copies with the source's time and compare them later, so this must stick. */
-        FILETIME t[3];
-        FILETIME *p[3];
+    case 4: { /* FileBasicInformation: 0 or -1 = leave as is. */
+        RedlineFsTime times[3];
+        RedlineFsTime *ptrs[3];
         for (int i = 0; i < 3; i++) {
-            uint64_t v = M64(a[2] + 8 * i);
-            t[i].dwLowDateTime = (DWORD)v;
-            t[i].dwHighDateTime = (DWORD)(v >> 32);
-            p[i] = v && v != ~0ull ? &t[i] : NULL;
+            uint64_t raw = M64(a[2] + 8 * i);
+            times[i].seconds = (int64_t)(raw / 10000000ull) - 11644473600ll;
+            times[i].nanoseconds = (uint32_t)((raw % 10000000ull) * 100ull);
+            ptrs[i] = raw && raw != ~0ull ? &times[i] : NULL;
         }
-        if (f->h != (RedlineFsHandle)-1 && (p[0] || p[1] || p[2]) && !SetFileTime((HANDLE)(intptr_t)f->h, p[0], p[1], p[2]) && ktrace())
-            fprintf(stderr, "[file] SetFileTime on %s failed (%lu)\n", f->guest, GetLastError());
+        if (f->h != (RedlineFsHandle)-1 && (ptrs[0] || ptrs[1] || ptrs[2]) &&
+            redline_fs_set_times(f->h, ptrs[0], ptrs[1], ptrs[2]) && ktrace())
+            fprintf(stderr, "[file] setting timestamps on %s failed (%d)\\n", f->guest, errno);
         break;
     }
     case 14: /* FilePositionInformation */
         v.QuadPart = (LONGLONG)M64(a[2]);
         redline_fs_seek(f->h, v.QuadPart, SEEK_SET);
         break;
-    case 19:   /* FileAllocationInformation: reserves space; only shrinks the file if it is smaller than it */
+    case 19:   /* FileAllocationInformation */
     case 20: { /* FileEndOfFileInformation */
         RedlineFsInfo size;
         v.QuadPart = (LONGLONG)M64(a[2]);
@@ -647,7 +661,7 @@ static uint32_t k_NtSetInformationFile(X86Ctx *c, const uint32_t *a) {
         }
         break;
     default:
-        fprintf(stderr, "NtSetInformationFile: class %u not implemented\n", a[4]);
+        fprintf(stderr, "NtSetInformationFile: class %u not implemented\\n", a[4]);
         exit(4);
     }
     iosb(a[1], STATUS_SUCCESS, 0);
@@ -658,12 +672,12 @@ static uint32_t k_NtQueryFullAttributesFile(X86Ctx *c, const uint32_t *a) {
     /* (ObjectAttributes, FileNetworkOpenInformation*) */
     char guest[GPATH], host[MAX_PATH];
     guest_path(a[0], guest);
-    WIN32_FILE_ATTRIBUTE_DATA d;
-    if (!host_path(guest, host) || !GetFileAttributesExA(host, GetFileExInfoStandard, &d)) {
-        if (flog()) fprintf(stderr, "[file] attributes %s -> not found\n", guest);
+    RedlineFsInfo info;
+    if (!host_path(guest, host) || redline_fs_stat(host, &info)) {
+        if (flog()) fprintf(stderr, "[file] attributes %s -> not found\\n", guest);
         return STATUS_OBJECT_NAME_NOT_FOUND;
     }
-    network_open_info(a[1], &d);
+    network_open_info(a[1], &info);
     return STATUS_SUCCESS;
 }
 
