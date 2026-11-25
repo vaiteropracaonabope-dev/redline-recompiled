@@ -12,6 +12,9 @@ int main(void) {
     char buffer[32] = {0};
     const char payload[] = "windows-fs";
     RedlineFsInfo info;
+    RedlineFsTime created_time = {1699999900, 0};
+    RedlineFsTime accessed_time = {1700000000, 0};
+    RedlineFsTime modified_time = {1700000100, 0};
     RedlineFsDirEntry entry;
     RedlineFsDirHandle dir;
     RedlineFsHandle handle;
@@ -36,11 +39,15 @@ int main(void) {
     CHECK(redline_fs_pread(handle, buffer, sizeof buffer, 64) == 0);
     CHECK(memcmp(buffer, "windo", 5) == 0);
     CHECK(redline_fs_pwrite(handle, "SAVE", 4, 0) == 4);
+    CHECK(redline_fs_set_times(handle, &created_time, &accessed_time, &modified_time) == 0);
     CHECK(redline_fs_sync(handle) == 0);
     CHECK(redline_fs_close(handle) == 0);
 
     CHECK(redline_fs_stat(file, &info) == 0);
     CHECK(info.size == 5 && !info.is_directory);
+    CHECK(info.created_seconds == created_time.seconds);
+    CHECK(info.accessed_seconds == accessed_time.seconds);
+    CHECK(info.modified_seconds == modified_time.seconds);
     CHECK(redline_fs_stat(subdir, &info) == 0 && info.is_directory);
 
     dir = redline_fs_dir_open(temp);
