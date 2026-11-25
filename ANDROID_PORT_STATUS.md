@@ -156,4 +156,4 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Validate handles before multi-object waits; invalid or already-closed objects return `STATUS_INVALID_HANDLE`.
 - [ ] KTHREAD objects remain retained as stable wait targets; full thread-object lifetime/reference accounting and actual guest ABI validation for duplicate/close calls remain open.
 - [ ] Guest kernel object memory is bump-allocated, so logical invalidation does not reclaim guest memory. A free-list/allocator and object-type-specific cleanup are still future work.
-- [ ] Await Android NDK, native ARM64, and Windows CI for the handle-reference changes.
+- [x] Android NDK compile, native ARM64 tests, and Windows MSVC checks passed in workflow run 45526682805 (all three jobs successful).
