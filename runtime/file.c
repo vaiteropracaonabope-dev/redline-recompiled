@@ -774,6 +774,8 @@ static uint32_t k_NtQueryDirectoryFile(X86Ctx *c, const uint32_t *a) {
     int restart = (uint8_t)a[9];
     char mask[GPATH] = "*";
     if (a[8] && M16(a[8])) ansi_read(a[8], mask, sizeof mask);
+    /* Win32 FindFirstFile treats *.* as all names, including names without a dot. */
+    if (!_stricmp(mask, "*.*")) strcpy(mask, "*");
 
     if (!f->find || restart) {
         if (f->find) redline_fs_dir_close(f->find);
