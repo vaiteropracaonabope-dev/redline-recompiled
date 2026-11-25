@@ -12,6 +12,7 @@
 #include <ctype.h>
 
 #include "xbox.h"
+#include "host_path.h"
 
 #define STATUS_SUCCESS 0x00000000u
 #define STATUS_NO_MORE_FILES 0x80000006u
@@ -71,11 +72,7 @@ static int starts_with_i(const char *s, const char *prefix) { return !_strnicmp(
 
 /* "\Device\Harddisk0\PartitionN" with nothing (or just "\") after it: the whole volume */
 static int is_partition_root(const char *guest) {
-    const char *p = guest;
-    if (!starts_with_i(p, "\\Device\\Harddisk0\\Partition")) return 0;
-    p += strlen("\\Device\\Harddisk0\\Partition");
-    while (*p >= '0' && *p <= '9') p++;
-    return !*p || (p[0] == '\\' && !p[1]);
+    return redline_xbox_path_is_partition_root(guest);
 }
 
 /* ---------------- mods ----------------
@@ -207,29 +204,29 @@ static int host_path(const char *guest, char *out) {
         snprintf(rest, sizeof rest, "%s", p + 2);
         snprintf(p, sizeof p, "%s%s", g_links[i].target, rest);
     }
+
+    RedlineXboxPath parsed;
+    if (!redline_xbox_path_classify(p, &parsed)) return 0;
     const char *root = guest_path_root();
     int dev;
-    if (starts_with_i(p, "\\Device\\CdRom0")) {
-        const char *mod = mod_file(p + strlen("\\Device\\CdRom0"));
+    if (parsed.device == REDLINE_XBOX_PATH_DISC) {
+        const char *mod = mod_file(parsed.suffix);
         if (mod) snprintf(out, MAX_PATH, "%s", mod);
-        else snprintf(out, MAX_PATH, "%s%s", root, p + strlen("\\Device\\CdRom0"));
+        else snprintf(out, MAX_PATH, "%s%s", root, parsed.suffix);
         dev = 1;
-    } else if (starts_with_i(p, "\\Device\\Harddisk0\\Partition")) {
-        const char *rest = p + strlen("\\Device\\Harddisk0\\Partition");
-        int n = atoi(rest);
-        while (*rest >= '0' && *rest <= '9') rest++;
+    } else if (parsed.device == REDLINE_XBOX_PATH_PARTITION) {
         char dir[MAX_PATH];
         snprintf(dir, sizeof dir, "%s\\..\\hdd", root);
         CreateDirectoryA(dir, NULL); /* hdd\PartitionN is created next to the game folder on first use */
-        snprintf(dir + strlen(dir), sizeof dir - strlen(dir), "\\Partition%d", n);
+        snprintf(dir + strlen(dir), sizeof dir - strlen(dir), "\\Partition%u", parsed.partition);
         CreateDirectoryA(dir, NULL);
-        snprintf(out, MAX_PATH, "%s%s", dir, rest);
+        snprintf(out, MAX_PATH, "%s%s", dir, parsed.suffix);
         dev = 2;
     } else {
         return 0;
     }
     size_t n = strlen(out);
-    while (n > 3 && (out[n - 1] == '\\' || out[n - 1] == '/')) out[--n] = 0; /* "dir\" opens the dir */
+    while (n > 3 && (out[n - 1] == '\\' || out[n - 1] == '/')) out[--n] = 0;
     return dev;
 }
 
