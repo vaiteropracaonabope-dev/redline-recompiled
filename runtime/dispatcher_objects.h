@@ -16,10 +16,23 @@ static inline int redline_semaphore_release(int32_t current_count, int32_t maxim
     return 1;
 }
 
-static inline int redline_mutant_acquire(int32_t *signal, uint32_t *owner, uint32_t thread) {
-    if (!signal || !owner || !thread || (*signal <= 0 && *owner != thread)) return 0;
+/* Acquire result: 0 = unavailable/invalid, 1 = acquired normally, 2 = acquired abandoned. */
+static inline int redline_mutant_acquire(int32_t *signal, uint32_t *owner, uint8_t *abandoned,
+                                        uint32_t thread) {
+    if (!signal || !owner || !abandoned || !thread || (*signal <= 0 && *owner != thread)) return 0;
+    int result = *abandoned ? 2 : 1;
+    *abandoned = 0;
     --*signal; /* negative values represent recursive ownership depth */
     *owner = thread;
+    return result;
+}
+
+static inline int redline_mutant_abandon(int32_t *signal, uint32_t *owner, uint8_t *abandoned,
+                                         uint32_t exiting_thread) {
+    if (!signal || !owner || !abandoned || !exiting_thread || *owner != exiting_thread) return 0;
+    *owner = 0;
+    *signal = 1;
+    *abandoned = 1;
     return 1;
 }
 
