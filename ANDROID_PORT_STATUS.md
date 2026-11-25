@@ -50,5 +50,6 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 
 - [x] Extract Xbox device-path classification into the platform-neutral header `runtime/host_path.h`; it parses disc and hard-disk partition paths without Win32 APIs.
 - [x] Integrate that parser into the existing Windows filesystem mapper in `runtime/file.c`, preserving the host-specific file I/O implementation for now.
-- [ ] Run ARM64 tests for disc paths, partition roots, partition subpaths, case-insensitive matching, and invalid device names.
+- [x] Run native ARM64 tests for disc paths, partition roots, partition subpaths, and invalid device names; GitHub Actions run 45519263315 passed the runtime test after correcting test-string escaping.
+- [ ] Finish the Android NDK cross-compile job for the new path tests; native ARM64 runtime passed, NDK job is still running.
 - [ ] Define a host filesystem operations interface (open/read/write/stat/enumerate/create/remove) and implement Android/POSIX behavior before porting the full HLE file layer. The current `runtime/file.c` still directly depends on Win32 handles, FindFirstFile, CreateFile, ReadFile, and related APIs.
