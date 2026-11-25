@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #define _POSIX_C_SOURCE 200809L
 #include "host_thread.h"
 #include <pthread.h>
@@ -68,4 +69,24 @@ uint32_t redline_thread_resume(RedlineThreadToken token) {
     pthread_cond_signal(&thread->condition);
     pthread_mutex_unlock(&thread->mutex);
     return previous;
+}
+
+#include <string.h>
+#include <sched.h>
+void redline_thread_set_name(const char *name) {
+#if defined(__linux__) || defined(__ANDROID__)
+    if (name) (void)pthread_setname_np(pthread_self(), name);
+#else
+    (void)name;
+#endif
+}
+void redline_thread_set_priority(int priority) {
+    if (priority != REDLINE_THREAD_PRIORITY_TIME_CRITICAL) return;
+    /* SCHED_FIFO usually requires elevated privileges; treat this as best effort. */
+    int minimum = sched_get_priority_min(SCHED_FIFO);
+    if (minimum < 0) return;
+    struct sched_param parameter;
+    memset(&parameter, 0, sizeof parameter);
+    parameter.sched_priority = minimum;
+    (void)pthread_setschedparam(pthread_self(), SCHED_FIFO, &parameter);
 }
