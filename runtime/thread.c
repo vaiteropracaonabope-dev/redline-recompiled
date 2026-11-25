@@ -28,6 +28,8 @@ enum { OBJ_EVENT_NOTIFY = 0, OBJ_EVENT_SYNC = 1, OBJ_MUTANT = 2, OBJ_SEMAPHORE =
 #define OBJ_TYPE(o) M8(o)
 #define OBJ_SIGNAL(o) (*(int32_t *)(g_mem + (uint32_t)(o) + 4))
 #define MUTANT_OWNER(o) M32((o) + 0x18)
+#define MUTANT_ABANDONED(o) M8((o) + 0x1C)
+#define MAX_TRACKED_MUTANTS 4096
 #define SEMAPHORE_LIMIT(o) (*(int32_t *)(g_mem + (uint32_t)(o) + 0x10))
 
 /* Waiters recheck guest dispatcher objects after every notification. A sequence word lets one
@@ -39,6 +41,27 @@ void thread_object_wake(uint32_t o) {
     redline_sync_wake_all(&g_object_wake_seq);
 }
 static void wake(uint32_t o) { thread_object_wake(o); }
+
+/* Objects are guest allocations and remain allocated for now. Track mutant addresses explicitly instead of
+ * scanning arbitrary kernel memory for a matching dispatcher type. All accesses occur under the guest GIL. */
+static uint32_t g_mutants[MAX_TRACKED_MUTANTS];
+static uint32_t g_mutant_count;
+
+static int track_mutant(uint32_t object) {
+    if (g_mutant_count >= MAX_TRACKED_MUTANTS) return 0;
+    g_mutants[g_mutant_count++] = object;
+    return 1;
+}
+
+static void abandon_thread_mutants(uint32_t thread) {
+    for (uint32_t i = 0; i < g_mutant_count; ++i) {
+        uint32_t object = g_mutants[i];
+        if (redline_mutant_abandon(&OBJ_SIGNAL(object), &MUTANT_OWNER(object),
+                                   &MUTANT_ABANDONED(object), thread))
+            wake(object);
+    }
+}
+
 
 static THREAD_LOCAL jmp_buf *t_exit;
 THREAD_LOCAL X86Ctx *t_ctx; /* this host thread's guest context, for crash reports */
@@ -334,6 +357,7 @@ static void run_guest(X86Ctx *c, uint32_t target) {
     t_exit = &jb;
     if (!setjmp(jb)) x86_call_indirect(c, target);
     t_exit = outer;
+    abandon_thread_mutants(current_thread(c));
     OBJ_SIGNAL(current_thread(c)) = 1;
     wake(current_thread(c));
     if (slot < 64) g_contexts[slot] = NULL; /* the context is freed once the thread exits */
@@ -459,7 +483,7 @@ static int try_acquire(uint32_t o, uint32_t thread) {
         OBJ_SIGNAL(o) -= 1;
         return 1;
     case OBJ_MUTANT:
-        return redline_mutant_acquire(&OBJ_SIGNAL(o), &MUTANT_OWNER(o), thread);
+        return redline_mutant_acquire(&OBJ_SIGNAL(o), &MUTANT_OWNER(o), &MUTANT_ABANDONED(o), thread);
     default: /* notification event/timer, thread */
         return OBJ_SIGNAL(o) > 0;
     }
@@ -543,17 +567,23 @@ static uint32_t wait_objects(X86Ctx *c, uint32_t count, const uint32_t *objs, in
     for (;;) {
         if (wait_all) {
             if (can_acquire_all(count, objs, thread)) {
+                int abandoned = 0;
                 for (uint32_t i = 0; i < count; ++i) {
-                    if (!try_acquire(objs[i], thread)) {
+                    int acquired = try_acquire(objs[i], thread);
+                    if (!acquired) {
                         fprintf(stderr, "[thread] wait-all acquisition invariant failed\\n");
                         fatal_exit(1);
                     }
+                    if (acquired == 2) abandoned = 1;
                 }
-                return STATUS_SUCCESS;
+                return abandoned ? 0x00000080u : STATUS_SUCCESS; /* STATUS_ABANDONED_WAIT_0 */
             }
         } else {
-            for (uint32_t i = 0; i < count; i++)
-                if (try_acquire(objs[i], thread)) return STATUS_SUCCESS + i;
+            for (uint32_t i = 0; i < count; i++) {
+                int acquired = try_acquire(objs[i], thread);
+                if (acquired == 2) return 0x00000080u + i; /* STATUS_ABANDONED_WAIT_0 + index */
+                if (acquired == 1) return STATUS_SUCCESS + i;
+            }
         }
         if ((redline_sync_monotonic_ns() / 1000000ull) >= deadline) return STATUS_TIMEOUT;
         /* Capture the sequence while holding the GIL. If a setter runs after gil_release(), its increment
@@ -635,9 +665,11 @@ static uint32_t k_NtCreateSemaphore(X86Ctx *c, const uint32_t *a) {
 }
 static uint32_t k_NtCreateMutant(X86Ctx *c, const uint32_t *a) {
     /* (*MutantHandle, ObjectAttributes, InitialOwner) */
+    if (g_mutant_count >= MAX_TRACKED_MUTANTS) return 0xC000009Au; /* STATUS_INSUFFICIENT_RESOURCES */
     uint32_t o = kernel_alloc(0x20);
     obj_init(o, OBJ_MUTANT, 8, (uint8_t)a[2] ? 0 : 1);
     if ((uint8_t)a[2]) MUTANT_OWNER(o) = current_thread(c);
+    if (!track_mutant(o)) return 0xC000009Au;
     M32(a[0]) = o;
     return STATUS_SUCCESS;
 }
