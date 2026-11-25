@@ -69,7 +69,8 @@ void dpc_start(void);
 void dpc_kick(void); /* thread.c: an interrupt was raised; run the DPC thread's pass now (any thread) */
 uint32_t guest_call(X86Ctx *c, uint32_t target, int n, const uint32_t *args);
 void queue_user_apc(X86Ctx *c, uint32_t routine, uint32_t a0, uint32_t a1, uint32_t a2); /* thread.c */
-int file_close(uint32_t handle);
+int file_close(uint32_t object);
+int file_close_special_handle(uint32_t handle);
 void nv2a_init(void);
 void nv2a_tick(void);
 uint32_t nv2a_pushbuffer_run(uint32_t put);
