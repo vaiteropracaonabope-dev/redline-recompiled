@@ -121,4 +121,5 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Replace 1 ms polling for wait-any and wait-all dispatcher waits with a shared host synchronization sequence; waiters capture the sequence while holding the guest lock, release the lock, and sleep until a signal notification or timeout.
 - [x] Route dispatcher object signal changes through the shared wake sequence, including thread/event/semaphore/mutant/timer paths in `thread.c`.
 - [x] Notify dispatcher waiters when synchronous file I/O completion signals an event in `file.c`.
-- [ ] Validate the revised wait behavior with the Android NDK and Windows translation-unit CI checks; runtime stress tests for wait-any/wait-all, synchronization events, APCs, and timeout races remain necessary.
+- [x] Android NDK syntax checks for `thread.c` and `file.c`, Windows MSVC translation-unit checks, and native ARM64 runtime tests passed in workflow run 45525519820.
+- [ ] Runtime stress tests for wait-any/wait-all, synchronization events, APCs, and timeout races remain necessary; CI syntax checks do not prove full guest-kernel semantics.
