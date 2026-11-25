@@ -48,10 +48,24 @@ static void test_mutant_abandonment(void) {
     assert(redline_mutant_release(&signal, &owner, 22, NULL));
     assert(signal == 1 && owner == 0);
 }
-int main(void) {
+
+static void test_object_references(void) {
+    uint32_t refs = 1;
+    assert(redline_object_reference(&refs) && refs == 2);
+    assert(redline_object_reference(&refs) && refs == 3);
+    assert(!redline_object_dereference(NULL));
+    assert(!redline_object_dereference(&(uint32_t){0}));
+    assert(!redline_object_dereference(&refs) && refs == 2);
+    assert(!redline_object_dereference(&refs) && refs == 1);
+    assert(redline_object_dereference(&refs) && refs == 0);
+    assert(!redline_object_reference(&refs));
+    refs = UINT32_MAX;
+    assert(!redline_object_reference(&refs) && refs == UINT32_MAX);
+}
+\nint main(void) {
     test_semaphore();
     test_mutant_recursion();
-    test_mutant_abandonment();
+    test_mutant_abandonment();\n    test_object_references();
     puts("dispatcher object tests passed");
     return 0;
 }
