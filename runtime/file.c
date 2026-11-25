@@ -136,7 +136,7 @@ static void mod_walk(const char *dir, const char *rel, int mod, int *cap) {
                 g_modfiles = grown;
                 *cap = next_cap;
             }
-            char *rel_copy = duplicate_string(subrel), *host_copy = _strdup(sub);
+            char *rel_copy = duplicate_string(subrel), *host_copy = duplicate_string(sub);
             if (!rel_copy || !host_copy) {
                 free(rel_copy);
                 free(host_copy);
@@ -152,7 +152,7 @@ static int modfile_cmp(const void *a, const void *b) {
     int c = ascii_case_compare(x->rel, y->rel);
     return c ? c : x->mod - y->mod;
 }
-static int name_cmp(const void *a, const void *b) { return _stricmp(a, b); }
+static int name_cmp(const void *a, const void *b) { return ascii_case_compare(a, b); }
 
 static const char *mod_key(int i) { /* mod_<name>, with anything but letters and digits as _ */
     static char k[80];
@@ -191,7 +191,7 @@ static void mods_init(void) {
     qsort(g_modfiles, g_nmodfiles, sizeof *g_modfiles, modfile_cmp);
     int unique = 0; /* one per path: the first mod's */
     for (int i = 0; i < g_nmodfiles; i++)
-        if (!unique || _stricmp(g_modfiles[unique - 1].rel, g_modfiles[i].rel))
+        if (!unique || ascii_case_compare(g_modfiles[unique - 1].rel, g_modfiles[i].rel))
             g_modfiles[unique++] = g_modfiles[i];
     g_nmodfiles = unique;
 }
@@ -216,7 +216,7 @@ static const char *mod_file(const char *rest) {
     ModFile k = {key, NULL, 0};
     int lo = 0, hi = g_nmodfiles - 1;
     while (lo <= hi) {
-        int mid = (lo + hi) / 2, c = _stricmp(g_modfiles[mid].rel, k.rel);
+        int mid = (lo + hi) / 2, c = ascii_case_compare(g_modfiles[mid].rel, k.rel);
         if (!c) {
             static int logged[4096]; /* each path once */
             if (mid < 4096 && !logged[mid]++) fprintf(stderr, "[mods] %s from %s\n", key, g_mod_name[g_modfiles[mid].mod]);
@@ -236,7 +236,7 @@ static int host_path(const char *guest, char *out) {
     if (p[0] && p[1] == ':') { /* drive letter -> symbolic link target */
         char link[8] = {'\\', '?', '?', '\\', p[0], ':', 0};
         int i;
-        for (i = 0; i < MAX_LINKS && _stricmp(g_links[i].link, link); i++) {}
+        for (i = 0; i < MAX_LINKS && ascii_case_compare(g_links[i].link, link); i++) {}
         if (i == MAX_LINKS) return 0;
         char rest[GPATH];
         snprintf(rest, sizeof rest, "%s", p + 2);
@@ -784,7 +784,7 @@ static uint32_t k_NtQueryDirectoryFile(X86Ctx *c, const uint32_t *a) {
     char mask[GPATH] = "*";
     if (a[8] && M16(a[8])) ansi_read(a[8], mask, sizeof mask);
     /* Win32 FindFirstFile treats *.* as all names, including names without a dot. */
-    if (!_stricmp(mask, "*.*")) strcpy(mask, "*");
+    if (!ascii_case_compare(mask, "*.*")) strcpy(mask, "*");
 
     if (!f->find || restart) {
         if (f->find) redline_fs_dir_close(f->find);
@@ -895,7 +895,7 @@ static uint32_t k_IoCreateSymbolicLink(X86Ctx *c, const uint32_t *a) {
     ansi_read(a[1], target, sizeof target);
     int i, free_slot = -1;
     for (i = 0; i < MAX_LINKS; i++) {
-        if (!_stricmp(g_links[i].link, link)) break;
+        if (!ascii_case_compare(g_links[i].link, link)) break;
         if (!g_links[i].link[0] && free_slot < 0) free_slot = i;
     }
     if (i == MAX_LINKS) i = free_slot;
@@ -909,7 +909,7 @@ static uint32_t k_IoDeleteSymbolicLink(X86Ctx *c, const uint32_t *a) {
     char link[64];
     ansi_read(a[0], link, sizeof link);
     for (int i = 0; i < MAX_LINKS; i++)
-        if (!_stricmp(g_links[i].link, link)) g_links[i].link[0] = 0;
+        if (!ascii_case_compare(g_links[i].link, link)) g_links[i].link[0] = 0;
     return STATUS_SUCCESS;
 }
 static uint32_t k_NtOpenSymbolicLinkObject(X86Ctx *c, const uint32_t *a) {
@@ -917,7 +917,7 @@ static uint32_t k_NtOpenSymbolicLinkObject(X86Ctx *c, const uint32_t *a) {
     char name[GPATH];
     guest_path(a[1], name);
     for (int i = 0; i < MAX_LINKS; i++)
-        if (g_links[i].link[0] && !_stricmp(g_links[i].link, name)) {
+        if (g_links[i].link[0] && !ascii_case_compare(g_links[i].link, name)) {
             M32(a[0]) = 0x4C000000u | (i + 1);
             return STATUS_SUCCESS;
         }
