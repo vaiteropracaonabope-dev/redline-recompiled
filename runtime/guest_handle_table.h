@@ -12,6 +12,9 @@
 #define REDLINE_GUEST_HANDLE_CAPACITY REDLINE_GUEST_HANDLE_SLOT_MASK
 #define REDLINE_GUEST_HANDLE_MAX_GENERATION (UINT32_MAX >> REDLINE_GUEST_HANDLE_SLOT_BITS)
 #define REDLINE_GUEST_HANDLE_CURRENT_THREAD 0xFFFFFFFEu
+#define REDLINE_GUEST_HANDLE_SPECIAL_MASK 0xFF000000u
+#define REDLINE_GUEST_HANDLE_SYMLINK_TAG 0x4C000000u
+#define REDLINE_GUEST_HANDLE_AFTER_SPECIAL_GENERATION 0x0004D000u
 
 typedef struct {
     uint32_t object;
@@ -48,6 +51,11 @@ static inline int redline_guest_handle_insert(RedlineGuestHandleTable *table, ui
             continue;
         }
         uint32_t value = (entry->generation << REDLINE_GUEST_HANDLE_SLOT_BITS) | slot;
+        /* Keep the file HLE's legacy symbolic-link handle namespace separate. */
+        if ((value & REDLINE_GUEST_HANDLE_SPECIAL_MASK) == REDLINE_GUEST_HANDLE_SYMLINK_TAG) {
+            entry->generation = REDLINE_GUEST_HANDLE_AFTER_SPECIAL_GENERATION;
+            continue;
+        }
         /* Keep the Xbox pseudo current-thread handle and INVALID_HANDLE_VALUE reserved. */
         if (value == REDLINE_GUEST_HANDLE_CURRENT_THREAD || value == UINT32_MAX) {
             entry->retired = 1;
@@ -65,7 +73,8 @@ static inline int redline_guest_handle_insert(RedlineGuestHandleTable *table, ui
 static inline int redline_guest_handle_lookup(const RedlineGuestHandleTable *table, uint32_t handle,
                                                uint8_t expected_type, uint32_t *object) {
     if (!table || !handle || handle == REDLINE_GUEST_HANDLE_CURRENT_THREAD ||
-        handle == UINT32_MAX || !object) return 0;
+        handle == UINT32_MAX || (handle & REDLINE_GUEST_HANDLE_SPECIAL_MASK) == REDLINE_GUEST_HANDLE_SYMLINK_TAG ||
+        !object) return 0;
     uint32_t slot = handle & REDLINE_GUEST_HANDLE_SLOT_MASK;
     uint32_t generation = handle >> REDLINE_GUEST_HANDLE_SLOT_BITS;
     if (!slot || slot > REDLINE_GUEST_HANDLE_CAPACITY || !generation) return 0;
@@ -80,7 +89,8 @@ static inline int redline_guest_handle_lookup(const RedlineGuestHandleTable *tab
 static inline int redline_guest_handle_close(RedlineGuestHandleTable *table, uint32_t handle,
                                               uint32_t *object, uint8_t *type) {
     if (!table || !object || !type || !handle ||
-        handle == REDLINE_GUEST_HANDLE_CURRENT_THREAD || handle == UINT32_MAX) return 0;
+        handle == REDLINE_GUEST_HANDLE_CURRENT_THREAD || handle == UINT32_MAX ||
+        (handle & REDLINE_GUEST_HANDLE_SPECIAL_MASK) == REDLINE_GUEST_HANDLE_SYMLINK_TAG) return 0;
     uint32_t slot = handle & REDLINE_GUEST_HANDLE_SLOT_MASK;
     uint32_t generation = handle >> REDLINE_GUEST_HANDLE_SLOT_BITS;
     if (!slot || slot > REDLINE_GUEST_HANDLE_CAPACITY || !generation) return 0;
