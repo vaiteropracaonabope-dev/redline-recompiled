@@ -266,8 +266,8 @@ static void hang_report(void) {
             int k;
             for (k = 0; k < 16 && fn[k] && fn[k] != f; k++) {}
             if (k < 16) fn[k] = f, hits[k]++;
-            Sleep(0);
-            if (s % 10 == 0) Sleep(1);
+            redline_sync_yield();
+            if (s % 10 == 0) redline_sync_sleep_ms(1);
         }
         fprintf(stderr, "[hang] thread %d samples:", (int)i);
         for (int k = 0; k < 16 && fn[k]; k++) fprintf(stderr, " %08X x%u", fn[k], hits[k]);
@@ -286,9 +286,9 @@ static void hang_report(void) {
 
 static DWORD WINAPI watchdog_proc(void *p) {
     thread_name("watchdog");
-    ULONGLONG due = p ? GetTickCount64() + 1000ull * (uintptr_t)p : ~0ull;
+    ULONGLONG due = p ? (redline_sync_monotonic_ns() / 1000000ull) + 1000ull * (uintptr_t)p : ~0ull;
     for (;;) {
-        Sleep(1000);
+        redline_sync_sleep_ms(1000);
         if (DeleteFileA("build/prof.now")) profile_run(5);
         memwatch_poll();
         if (DeleteFileA("build/ram.now")) { /* guest RAM as it is (no lock: a snapshot taken while threads run), at
@@ -299,7 +299,7 @@ static DWORD WINAPI watchdog_proc(void *p) {
             fprintf(stderr, "[ram] wrote build/ram.bin\n");
         }
         int asked = DeleteFileA("build/hang.now");
-        if (!asked && GetTickCount64() < due) continue;
+        if (!asked && (redline_sync_monotonic_ns() / 1000000ull) < due) continue;
         hang_report();
         if (!asked) ExitProcess(5);
     }
@@ -481,12 +481,11 @@ static uint32_t wait_objects(X86Ctx *c, uint32_t count, const uint32_t *objs, in
     if (timeout_ptr) {
         int64_t t = (int64_t)M64(timeout_ptr);
         if (t < 0) {
-            deadline = GetTickCount64() + (ULONGLONG)(-t / 10000);
+            deadline = (redline_sync_monotonic_ns() / 1000000ull) + (ULONGLONG)(-t / 10000);
         } else {
-            FILETIME ft;
-            GetSystemTimeAsFileTime(&ft);
-            int64_t now = ((int64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime;
-            deadline = GetTickCount64() + (t > now ? (ULONGLONG)((t - now) / 10000) : 0);
+            int64_t now = (int64_t)redline_sync_realtime_100ns() + 116444736000000000ll;
+            deadline = (redline_sync_monotonic_ns() / 1000000ull) +
+                       (t > now ? (ULONGLONG)((t - now) / 10000) : 0);
         }
     }
     for (;;) {
@@ -501,7 +500,7 @@ static uint32_t wait_objects(X86Ctx *c, uint32_t count, const uint32_t *objs, in
             for (uint32_t i = 0; i < count; i++)
                 if (try_acquire(objs[i], thread)) return STATUS_SUCCESS + i;
         }
-        if (GetTickCount64() >= deadline) return STATUS_TIMEOUT;
+        if ((redline_sync_monotonic_ns() / 1000000ull) >= deadline) return STATUS_TIMEOUT;
         int32_t seen = count == 1 ? OBJ_SIGNAL(objs[0]) : 0; /* read with the lock held: a change ends the sleep */
         gil_release();
         if (count == 1) WaitOnAddress(&OBJ_SIGNAL(objs[0]), &seen, sizeof seen, 1);
@@ -547,7 +546,7 @@ static uint32_t k_KeDelayExecutionThread(X86Ctx *c, const uint32_t *a) {
 }
 static uint32_t k_NtYieldExecution(X86Ctx *c, const uint32_t *a) {
     gil_release();
-    SwitchToThread();
+    redline_sync_yield();
     gil_acquire();
     return STATUS_SUCCESS;
 }
@@ -689,11 +688,10 @@ static X86Ctx g_dpc_ctx;
 
 static ULONGLONG due_ms(uint32_t lo, uint32_t hi) {
     int64_t t = (int64_t)(((uint64_t)hi << 32) | lo);
-    if (t < 0) return GetTickCount64() + (ULONGLONG)(-t / 10000);
-    FILETIME ft;
-    GetSystemTimeAsFileTime(&ft);
-    int64_t now = ((int64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime;
-    return GetTickCount64() + (t > now ? (ULONGLONG)((t - now) / 10000) : 0);
+    if (t < 0) return (redline_sync_monotonic_ns() / 1000000ull) + (ULONGLONG)(-t / 10000);
+    int64_t now = (int64_t)redline_sync_realtime_100ns() + 116444736000000000ll;
+    return (redline_sync_monotonic_ns() / 1000000ull) +
+           (t > now ? (ULONGLONG)((t - now) / 10000) : 0);
 }
 
 static int queue_dpc(uint32_t dpc, uint32_t a1, uint32_t a2) {
@@ -735,13 +733,9 @@ static DWORD WINAPI dpc_proc(void *p) {
     HANDLE timer = CreateWaitableTimerExW(NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
     g_dpc_kick = CreateEventA(NULL, FALSE, FALSE, NULL);
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
-    LARGE_INTEGER qf;
-    QueryPerformanceFrequency(&qf);
     static double next_vblank;
     for (;;) {
-        LARGE_INTEGER q;
-        QueryPerformanceCounter(&q);
-        double ms = q.QuadPart * 1000.0 / qf.QuadPart;
+        double ms = (double)redline_sync_monotonic_ns() / 1000000.0;
         int vblank = next_vblank && next_vblank - ms < 1; /* this wake is the vblank's: it jumps ahead */
         double wait = vblank ? next_vblank - ms : 1;
         if (timer && wait > 0) {
@@ -753,8 +747,8 @@ static DWORD WINAPI dpc_proc(void *p) {
         if (vblank) gil_acquire_urgent();
         else gil_acquire();
         nv2a_tick();
-        M32(0xFE820010u) = (uint32_t)(GetTickCount64() * 48); /* APU global sample counter (XGSCNT), 48 kHz */
-        ULONGLONG now = GetTickCount64();
+        M32(0xFE820010u) = (uint32_t)((redline_sync_monotonic_ns() / 1000000ull) * 48); /* APU global sample counter (XGSCNT), 48 kHz */
+        ULONGLONG now = (redline_sync_monotonic_ns() / 1000000ull);
         for (int i = 0; i < MAX_TIMERS; i++) {
             uint32_t t = g_timers[i].timer;
             if (!t || g_timers[i].due > now) continue;
@@ -766,8 +760,7 @@ static DWORD WINAPI dpc_proc(void *p) {
         }
         /* the vertical blank, 60 Hz (FRAME RATE above 60: that rate, which the game then renders at, forza_vblank):
          * flag it in the NV2A registers; D3D's interrupt handler acks it */
-        QueryPerformanceCounter(&q);
-        ms = q.QuadPart * 1000.0 / qf.QuadPart;
+        ms = (double)redline_sync_monotonic_ns() / 1000000.0;
         if (ms >= next_vblank - 0.05) {
             static double period;
             static int lock = -1; /* VSYNCLOCK=0: the emulated vblank keeps its own clock (testing) */
