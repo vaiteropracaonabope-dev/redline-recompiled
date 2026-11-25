@@ -134,3 +134,13 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Reject zero or over-limit multi-object wait counts rather than silently truncating them.
 - [ ] Abandoned-mutant handling when a guest thread exits, full object-handle validation/closing, and runtime stress tests remain open.
 - [x] Dispatcher semantics tests passed on Android NDK, native ARM64, and Windows CI; final validation is workflow run 45525897147 (all three jobs successful).
+
+
+## Abandoned mutant ownership
+
+- [x] Track created guest mutants explicitly (bounded registry of 4096 objects) rather than scanning arbitrary guest kernel memory.
+- [x] When a guest thread exits, release every mutant it still owns, mark it abandoned, and wake dispatcher waiters.
+- [x] The next successful waiter acquires an abandoned mutant and receives `STATUS_ABANDONED_WAIT_0` (or the matching index for wait-any); wait-all returns the abandoned status after acquiring all requested objects.
+- [x] Extend pure dispatcher tests for recursive owner exit, abandonment state, next-thread acquisition, and clearing the abandoned flag.
+- [ ] Full runtime tests with actual guest thread exit, wait-any/wait-all races, and mutant lifetime/handle references remain pending. The registry is intentionally bounded because dispatcher objects are not yet reference-counted or reclaimed.
+- [ ] Await Android NDK, native ARM64, and Windows CI for this change.
