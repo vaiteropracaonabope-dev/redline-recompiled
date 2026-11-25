@@ -10,6 +10,7 @@
 #if defined(__aarch64__) || defined(_M_ARM64)
 #include <arm_neon.h>
 
+typedef float32x4_t __m128;
 typedef float32x4_t redline_host_m128;
 
 static inline redline_host_m128 redline_mm_loadu_ps(const float *p) {
@@ -71,6 +72,22 @@ static inline redline_host_m128 redline_mm_xor_ps(redline_host_m128 a, redline_h
 static inline redline_host_m128 redline_mm_andnot_ps(redline_host_m128 a, redline_host_m128 b) {
     return vreinterpretq_f32_u32(vbicq_u32(vreinterpretq_u32_f32(b), vreinterpretq_u32_f32(a)));
 }
+
+/* Keep the lifter's emitted intrinsic spellings on the portable host API. */
+#define _mm_loadu_ps redline_mm_loadu_ps
+#define _mm_storeu_ps redline_mm_storeu_ps
+#define _mm_set1_ps redline_mm_set1_ps
+#define _mm_add_ps redline_mm_add_ps
+#define _mm_sub_ps redline_mm_sub_ps
+#define _mm_mul_ps redline_mm_mul_ps
+#define _mm_div_ps redline_mm_div_ps
+#define _mm_sqrt_ps redline_mm_sqrt_ps
+#define _mm_min_ps redline_mm_min_ps
+#define _mm_max_ps redline_mm_max_ps
+#define _mm_and_ps redline_mm_and_ps
+#define _mm_or_ps redline_mm_or_ps
+#define _mm_xor_ps redline_mm_xor_ps
+#define _mm_andnot_ps redline_mm_andnot_ps
 
 #else
 #include <emmintrin.h>
