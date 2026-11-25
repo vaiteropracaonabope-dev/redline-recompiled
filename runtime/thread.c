@@ -55,7 +55,7 @@ typedef struct {
     uint32_t worst_fn; /* guest function last entered when the longest hold ended */
 } GilStat;
 static GilStat g_gil_stat[64];
-static LONGLONG g_gil_window;
+static uint64_t g_gil_window;
 DWORD g_dpc_tid; /* the vblank/DPC thread, named in the GILLOG report */
 
 static int by_held(const void *a, const void *b) {
@@ -73,7 +73,7 @@ static int gil_stat(void) {
 
 /* The DPC thread (vblank, timers) is the interrupt: while it waits for the lock, a holder hands over at its next
  * safepoint instead of finishing its quantum, so the 60 Hz vblank is not late by however many threads queued */
-static volatile long g_gil_urgent;
+static volatile int32_t g_gil_urgent;
 static void gil_acquire_urgent(void) {
     redline_sync_store(&g_gil_urgent, 1);
     gil_acquire();
@@ -90,7 +90,7 @@ void gil_acquire(void) {
     uint64_t now = redline_sync_monotonic_ns();
     g_gil_since = now;
     if (gil_log()) {
-        double ms = (double)(now - (uint64_t)asked.QuadPart) / 1000000.0;
+        double ms = (double)(now - asked) / 1000000.0;
         int i = gil_stat();
         g_gil_stat[i].waited += ms, g_gil_stat[i].n++;
         if (ms > g_gil_stat[i].worst_wait) g_gil_stat[i].worst_wait = ms;
@@ -139,7 +139,7 @@ void gil_yield(void) {
         static volatile int32_t told;
         if (gil_log() && now - g_gil_since > 20 * g_gil_quantum && redline_sync_fetch_add(&told, 1) + 1 <= 20)
             fprintf(stderr, "[gil] thread %lu at IRQL %u keeps the lock %.0f ms in %08X\n", GetCurrentThreadId(),
-                    M8(t_ctx->fs_base + 0x24), (double)(now.QuadPart - g_gil_since) / g_gil_quantum, t_ctx->last_fn);
+                    M8(t_ctx->fs_base + 0x24), (double)(now - g_gil_since) / 1000000.0, t_ctx->last_fn);
         return;
     }
     gil_release();
