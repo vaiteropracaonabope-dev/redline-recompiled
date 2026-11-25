@@ -4,7 +4,7 @@
 
 This repository is the Windows x64 Redline Recompiled port of Forza Motorsport (Xbox, 2005). The existing build is not an Android build and cannot produce an APK as-is.
 
-The current build script, `tools/build.py`, invokes the Microsoft Visual C++ toolchain and links a Windows executable (`redline.exe`) plus a Windows game DLL (`forza_recomp.dll`). It links Windows system libraries and SDL3's Windows import library. The runtime also contains Windows-specific implementations, including WASAPI audio (`runtime/audio.c`) and Win32 file/device handling (`runtime/file.c`).
+The current build script, `tools/build.py`, invokes the Microsoft Visual C++ toolchain and links a Windows executable (`redline.exe`) plus a Windows game DLL (`forza_recomp.dll`). It links Windows system libraries and SDL3's Windows import library. The runtime still contains Windows-specific audio, graphics, startup, and device implementations. The Xbox file HLE has since been migrated to the platform-neutral `host_fs` interface, but the full application is not Android-buildable.
 
 ## Android port blockers
 
@@ -12,7 +12,7 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 2. **Graphics:** the current runtime uses Direct3D/Windows graphics interfaces. Android needs a Vulkan or OpenGL ES backend, or a proven translation layer, with the Xbox GPU behavior mapped correctly.
 3. **Audio:** replace the WASAPI host output with Android-compatible audio (AAudio or OpenSL ES, or SDL's Android audio backend).
 4. **Input and windowing:** use SDL3's Android support or Android NDK input/surface integration; add touch controls while retaining controller support.
-5. **Filesystem and permissions:** replace Win32 paths, handles, file enumeration and hard-coded Windows assumptions with Android app storage and the Storage Access Framework where needed.
+5. **Filesystem and permissions:** the Xbox file HLE now uses `host_fs` and generation-tagged guest handles; Android app-private storage, save-data policy, and Storage Access Framework integration remain to be completed.
 6. **Packaging:** create an Android Gradle/NDK application that packages the native runtime, assets supplied by the user, and ABI-specific libraries into an APK.
 
 ## Safe implementation order
@@ -43,7 +43,7 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 
 - `tools/build.py`: Windows-only MSVC/Zig Windows target, Windows executable and DLL linking.
 - `runtime/audio.c`: WASAPI / Windows COM audio output.
-- `runtime/file.c`: Win32 file APIs, Windows path conventions, and host filesystem mapping.
+- `runtime/file.c`: Xbox file HLE backed by the platform-neutral `host_fs` interface; Android app storage integration is still pending.
 - `README.md`: describes the current project as a Windows 10/11 x64 PC port requiring DirectX 11.1.
 
 ## Filesystem portability groundwork
@@ -52,12 +52,12 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Integrate that parser into the existing Windows filesystem mapper in `runtime/file.c`, preserving the host-specific file I/O implementation for now.
 - [x] Run native ARM64 tests for disc paths, partition roots, partition subpaths, and invalid device names; GitHub Actions run 45519263315 passed the runtime test after correcting test-string escaping.
 - [x] Finish Android NDK cross-compilation for the path/CPU smoke test; workflow run 45520455565 completed successfully.
-- [ ] Define a host filesystem operations interface (open/read/write/stat/enumerate/create/remove) and implement Android/POSIX behavior before porting the full HLE file layer. The current `runtime/file.c` still directly depends on Win32 handles, FindFirstFile, CreateFile, ReadFile, and related APIs.
+- [x] Define the host filesystem operations interface and integrate the Xbox file HLE with POSIX/Android and Windows backends; remaining work is Android app-storage and save-path policy.
 
 ## Portable host filesystem interface
 
 - [x] Add `runtime/host_fs.h`: platform-neutral operations for open/close, sequential and positioned I/O, seek, truncate, sync, metadata, directory creation/removal, and directory enumeration.
-- [x] Add `runtime/host_fs_posix.c`: POSIX backend intended for Linux and Android; it uses ordinary host paths and does not yet replace the Win32 calls in `runtime/file.c`.
+- [x] Add `runtime/host_fs_posix.c`: POSIX backend intended for Linux and Android, now used by `runtime/file.c` through `host_fs`.
 - [x] Add `tests/host_fs_posix.c` covering file creation, read/write, positioned I/O, truncate, sync, metadata, directory enumeration, and cleanup.
 - [x] Confirm Android NDK cross-compilation and native ARM64 runtime test for the POSIX backend; workflow run 45520455565 passed.
 - [x] Add and test the Windows backend for this interface.
@@ -73,7 +73,7 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] POSIX filesystem runtime tests passed on the native ARM64 runner in workflow run 45519799644.
 - [x] Configure MSVC in CI; the backend reached compilation, which exposed an MSVC secure-CRT warning for `strcpy`. Replace it with a bounded copy and rerun the Windows check.
 - [ ] Finish Android NDK cross-compilation for the POSIX backend in workflow run 45520068842; NDK installation is still in progress.
-- [ ] Migrate the Xbox filesystem HLE in `runtime/file.c` to the interface in small tested pieces. The HLE still calls Win32 APIs directly; neither backend is integrated there yet.
+- [x] Migrate the Xbox filesystem HLE in `runtime/file.c` to `host_fs`; the HLE no longer calls Win32 file APIs directly.
 
 ## Windows filesystem backend validation
 
@@ -132,7 +132,7 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Make mutant recursion explicit: recursive acquisitions decrement the signal count, releases restore it, and ownership clears only after the outermost release. Non-owner release is rejected.
 - [x] Make wait-all account for duplicate handles: repeated semaphore handles require multiple tokens, while a synchronization event/timer cannot be consumed twice from one signal.
 - [x] Reject zero or over-limit multi-object wait counts rather than silently truncating them.
-- [ ] Abandoned-mutant handling when a guest thread exits, full object-handle validation/closing, and runtime stress tests remain open.
+- [x] Abandoned-mutant handling and generation-tagged object-handle validation/closing are implemented; runtime stress tests remain open.
 - [x] Dispatcher semantics tests passed on Android NDK, native ARM64, and Windows CI; final validation is workflow run 45525897147 (all three jobs successful).
 
 
@@ -142,19 +142,19 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] When a guest thread exits, release every mutant it still owns, mark it abandoned, and wake dispatcher waiters.
 - [x] The next successful waiter acquires an abandoned mutant and receives `STATUS_ABANDONED_WAIT_0` (or the matching index for wait-any); wait-all returns the abandoned status after acquiring all requested objects.
 - [x] Extend pure dispatcher tests for recursive owner exit, abandonment state, next-thread acquisition, and clearing the abandoned flag.
-- [ ] Full runtime tests with actual guest thread exit, wait-any/wait-all races, and mutant lifetime/handle references remain pending. The registry is intentionally bounded because dispatcher objects are not yet reference-counted or reclaimed.
+- [ ] Full runtime tests with actual guest thread exit, wait-any/wait-all races, and mutant lifetime/handle references remain pending. The registry remains bounded at 4096 entries; object references are implemented, but guest kernel memory is not reclaimed.
 - [x] Android NDK compile, native ARM64 runtime tests, and Windows MSVC checks passed in workflow run 45526294099 (all three jobs successful).
 
 
-## Guest kernel handle references
+## Guest kernel object references and handle lifetime
 
-- [x] Add checked reference-count primitives for raw guest object-address handles, including overflow/underflow rejection.
+- [x] Add checked reference-count primitives for guest kernel objects, including overflow/underflow rejection.
 - [x] Initialize dispatcher-object references and file-object references at creation.
-- [x] Duplicate handles now acquire a reference; `NtClose` releases one reference and reports invalid handles.
+- [x] Generation-tagged handles now own independent object references; duplicate creates a second token, while `NtClose` invalidates one token and drops its reference.
 - [x] `ObReferenceObjectByHandle` and `ObfDereferenceObject` now maintain object references.
 - [x] Final file-handle release closes the host file/directory resources; final dispatcher-object release logically invalidates the object (guest kernel bump allocations are not reused).
 - [x] Validate handles before multi-object waits; invalid or already-closed objects return `STATUS_INVALID_HANDLE`.
-- [ ] KTHREAD objects remain retained as stable wait targets; full thread-object lifetime/reference accounting and actual guest ABI validation for duplicate/close calls remain open.
+- [x] Thread-object lifetime/reference accounting separates the handle reference, execution reference, and temporary waiter references. Retail-kernel behavior and real-title execution still require validation.
 - [ ] Guest kernel object memory is bump-allocated, so logical invalidation does not reclaim guest memory. A free-list/allocator and object-type-specific cleanup are still future work.
 - [x] Android NDK compile, native ARM64 tests, and Windows MSVC checks passed in workflow run 45526682805 (all three jobs successful).
 
@@ -164,7 +164,7 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Remove a finally released mutant from the bounded abandonment registry, clearing the vacated slot so repeated create/close cycles do not exhaust the 4096-entry registry.
 - [x] Use a shared tested registry-removal helper with swap-delete semantics; tests cover middle/first/last removal, missing objects, null inputs, and invalid counts.
 - [x] Android NDK, native ARM64, and Windows CI passed in workflow run 45527094973 (all three jobs successful).
-- [ ] Kernel guest memory itself remains bump-allocated and is not reused. Reusing raw guest object addresses without generation-tagged handles could make stale handles alias new objects, so physical reclamation is deferred until the handle ABI can safely distinguish generations.
+- [ ] Kernel guest memory itself remains bump-allocated and is not reused. Generation tags prevent stale HANDLE tokens from aliasing new entries, but direct guest object pointers still require complete lifetime accounting before physical address reuse.
 
 
 ## Guest thread and wait reference lifetime
@@ -174,8 +174,8 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Dispatcher waits pin every requested object while blocked and release those references on success, timeout, or wait completion.
 - [x] Pure reference-count tests cover closing a thread handle while execution continues and retaining an object while a waiter holds a temporary reference.
 - [x] Android NDK, native ARM64, and Windows checks passed in workflow run 45527094973.
-- [ ] Raw object-address handles still cannot distinguish a closed handle from another live reference to the same object. A true handle table and exact Xbox ABI validation remain necessary.
-- [ ] Kernel guest memory is still bump-allocated; logical destruction does not reclaim or reuse the guest address. Safe reuse is deferred until generation-aware handles are implemented.
+- [x] Generation-tagged HANDLE tokens distinguish closed generations and duplicate handles. Direct guest object pointers remain stable and are not physically reused.
+- [ ] Kernel guest memory is still bump-allocated; logical destruction does not reclaim or reuse the guest address. Safe reuse requires accounting for every outstanding object pointer as well as handle references.
 
 
 ## Generation-tagged guest handle table integration
