@@ -62,6 +62,18 @@ static void abandon_thread_mutants(uint32_t thread) {
     }
 }
 
+/* Remove destroyed mutants from the bounded owner-exit registry so closed objects do not
+ * permanently consume one of its slots. All callers hold the guest GIL. */
+static void untrack_mutant(uint32_t object) {
+    for (uint32_t i = 0; i < g_mutant_count; ++i) {
+        if (g_mutants[i] == object) {
+            g_mutants[i] = g_mutants[--g_mutant_count];
+            g_mutants[g_mutant_count] = 0;
+            return;
+        }
+    }
+}
+
 
 static THREAD_LOCAL jmp_buf *t_exit;
 THREAD_LOCAL X86Ctx *t_ctx; /* this host thread's guest context, for crash reports */
@@ -215,11 +227,11 @@ static int object_reference(uint32_t o) {
 static int object_dereference(uint32_t o) {
     if (!object_valid(o)) return 0;
     uint8_t type = OBJ_TYPE(o);
-    if (type == OBJ_THREAD) return 1; /* KTHREAD memory remains a stable wait target. */
     if (!redline_object_dereference((uint32_t *)(g_mem + o + 0x14))) return 1;
     if (type == 0xF0) {
         file_close(o);
     } else {
+        if (type == OBJ_MUTANT) untrack_mutant(o);
         M8(o) = 0; /* logical destruction; bump-allocated guest memory is not reused */
     }
     return 1;
@@ -395,6 +407,7 @@ static void run_guest(X86Ctx *c, uint32_t target) {
     OBJ_SIGNAL(current_thread(c)) = 1;
     wake(current_thread(c));
     if (slot < 64) g_contexts[slot] = NULL; /* the context is freed once the thread exits */
+    object_dereference(current_thread(c)); /* release the host execution reference */
 }
 
 void thread_run_main(X86Ctx *c, uint32_t entry) {
@@ -402,6 +415,7 @@ void thread_run_main(X86Ctx *c, uint32_t entry) {
     dpc_start();
     gil_acquire();
     PUSH32(0); /* return address for the entry point */
+    M32(current_thread(c) + 0x14) = 2; /* execution reference plus the implicit thread handle */
     run_guest(c, entry);
     fprintf(stderr, "main thread returned, eax=%08X\n", c->eax);
     gil_release();
@@ -468,6 +482,7 @@ static uint32_t k_PsCreateSystemThreadEx(X86Ctx *c, const uint32_t *a) {
     ThreadStart *ts = calloc(1, sizeof *ts);
     uint32_t stack = a[2] ? (a[2] + 0xFFFF) & ~0xFFFFu : 0x10000;
     uint32_t thread = thread_env_init(&ts->ctx, stack, a[3]);
+    M32(thread + 0x14) = 2; /* caller handle plus live execution reference */
     ts->start_routine = a[5];
     ts->start_context = a[6];
     ts->system_routine = a[9];
@@ -582,12 +597,22 @@ static int deliver_apcs(X86Ctx *c) {
  * Waiters sleep on a shared notification sequence and recheck guest dispatcher state under the GIL. This
  * supports wait-any and wait-all without polling; every object signal path, including file I/O completion,
  * advances the sequence after changing its guest signal state. */
+static uint32_t wait_finish(uint32_t count, const uint32_t *objs, uint32_t result) {
+    for (uint32_t i = 0; i < count; ++i) object_dereference(objs[i]);
+    return result;
+}
+
 static uint32_t wait_objects(X86Ctx *c, uint32_t count, const uint32_t *objs, int wait_all, uint32_t timeout_ptr,
                              int alertable) {
     if (!count || count > 64) return 0xC000000Du; /* STATUS_INVALID_PARAMETER */
-    for (uint32_t i = 0; i < count; ++i)
-        if (!object_valid(objs[i])) return STATUS_INVALID_HANDLE;
     if (alertable && deliver_apcs(c)) return STATUS_USER_APC;
+    uint32_t referenced = 0;
+    for (; referenced < count; ++referenced) {
+        if (!object_reference(objs[referenced])) {
+            while (referenced) object_dereference(objs[--referenced]);
+            return STATUS_INVALID_HANDLE;
+        }
+    }
     uint32_t thread = current_thread(c);
     uint64_t deadline = ~0ull;
     if (timeout_ptr) {
@@ -612,16 +637,17 @@ static uint32_t wait_objects(X86Ctx *c, uint32_t count, const uint32_t *objs, in
                     }
                     if (acquired == 2) abandoned = 1;
                 }
-                return abandoned ? 0x00000080u : STATUS_SUCCESS; /* STATUS_ABANDONED_WAIT_0 */
+                return wait_finish(count, objs, abandoned ? 0x00000080u : STATUS_SUCCESS); /* STATUS_ABANDONED_WAIT_0 */
             }
         } else {
             for (uint32_t i = 0; i < count; i++) {
                 int acquired = try_acquire(objs[i], thread);
-                if (acquired == 2) return 0x00000080u + i; /* STATUS_ABANDONED_WAIT_0 + index */
-                if (acquired == 1) return STATUS_SUCCESS + i;
+                if (acquired == 2) return wait_finish(count, objs, 0x00000080u + i); /* STATUS_ABANDONED_WAIT_0 + index */
+                if (acquired == 1) return wait_finish(count, objs, STATUS_SUCCESS + i);
             }
         }
-        if ((redline_sync_monotonic_ns() / 1000000ull) >= deadline) return STATUS_TIMEOUT;
+        if ((redline_sync_monotonic_ns() / 1000000ull) >= deadline)
+            return wait_finish(count, objs, STATUS_TIMEOUT);
         /* Capture the sequence while holding the GIL. If a setter runs after gil_release(), its increment
          * makes the wait return immediately, so no signal can be lost between checking and sleeping. */
         int32_t seen = redline_sync_load(&g_object_wake_seq);
