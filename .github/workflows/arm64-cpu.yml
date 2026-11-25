@@ -67,6 +67,8 @@ jobs:
         run: |
           cl /nologo /W3 /WX /Iruntime tests\dispatcher_objects.c /Fe:dispatcher-objects-test.exe
           dispatcher-objects-test.exe
+          cl /nologo /W3 /WX /Iruntime tests\guest_handle_table.c /Fe:guest-handle-table-test.exe
+          guest-handle-table-test.exe
           cl /nologo /W3 /WX /c /Iruntime runtime\host_fs_win32.c /Fo:host-fs-backend.obj
           cl /nologo /W3 /WX /c /Iruntime tests\host_fs_win32.c /Fo:host-fs-test.obj
           cl /nologo /W3 /WX host-fs-backend.obj host-fs-test.obj /Fe:host-fs-win32-test.exe
