@@ -11,6 +11,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <stdint.h>
+#include <inttypes.h>
 
 #include "xbox.h"
 #include "host_path.h"
@@ -34,6 +35,8 @@ static int ascii_case_compare(const char *a, const char *b) {
 static char *duplicate_string(const char *s) { size_t n=strlen(s)+1; char *copy=malloc(n); if(copy) memcpy(copy,s,n); return copy; }
 
 #define STATUS_SUCCESS 0x00000000u
+#define STATUS_INVALID_HANDLE 0xC0000008u
+#define STATUS_INVALID_PARAMETER 0xC000000Du
 #define STATUS_NO_MORE_FILES 0x80000006u
 #define STATUS_END_OF_FILE 0xC0000011u
 #define STATUS_ACCESS_DENIED 0xC0000022u
@@ -313,6 +316,7 @@ static int flog(void) {
 
 static uint32_t open_file(X86Ctx *c, uint32_t out_handle, uint32_t access, uint32_t oa, uint32_t iosb_va,
                           uint32_t disposition, uint32_t options) {
+    (void)c;
     char guest[GPATH], host[MAX_PATH];
     guest_path(oa, guest);
     achieve_file(guest, (access & 0x40000006u) != 0 || disposition != 1); /* GENERIC_WRITE, FILE_WRITE/APPEND_DATA */
@@ -430,7 +434,7 @@ static uint32_t open_file(X86Ctx *c, uint32_t out_handle, uint32_t access, uint3
     M32(fs_ctx) = dev == 1 ? i + 1 : is_dir;
     M32(fs_ctx + 0x1C) = i + 1;
     M32(obj + 8) = fs_ctx;
-    g_files[i] = (HFile){obj, h, 0, is_dir};
+    g_files[i] = (HFile){.obj = obj, .h = h, .find = 0, .is_dir = is_dir};
     RedlineFsInfo opened_info;
     if ((options & 8) && !is_dir && !redline_fs_stat(host, &opened_info)) /* FILE_NO_INTERMEDIATE_BUFFERING */
         g_files[i].unbuffered = 1, g_files[i].has_eof = 1, g_files[i].eof = (int64_t)opened_info.size;
@@ -553,6 +557,7 @@ static uint32_t rw(X86Ctx *c, const uint32_t *a, int write) {
 static uint32_t k_NtReadFile(X86Ctx *c, const uint32_t *a) { return rw(c, a, 0); }
 static uint32_t k_NtWriteFile(X86Ctx *c, const uint32_t *a) { return rw(c, a, 1); }
 static uint32_t k_NtFlushBuffersFile(X86Ctx *c, const uint32_t *a) {
+    (void)c;
     HFile *f = file_of(a[0]);
     if (f && f->h != (RedlineFsHandle)-1) redline_fs_sync(f->h);
     iosb(a[1], STATUS_SUCCESS, 0);
@@ -586,6 +591,7 @@ static void network_open_info(uint32_t va, const RedlineFsInfo *info) {
 }
 
 static uint32_t k_NtQueryInformationFile(X86Ctx *c, const uint32_t *a) {
+    (void)c;
     /* (FileHandle, IoStatusBlock, FileInformation, Length, FileInformationClass) */
     HFile *f = file_of(a[0]);
     if (!f) return STATUS_INVALID_HANDLE;
@@ -624,6 +630,7 @@ static uint32_t k_NtQueryInformationFile(X86Ctx *c, const uint32_t *a) {
 }
 
 static uint32_t k_NtSetInformationFile(X86Ctx *c, const uint32_t *a) {
+    (void)c;
     /* (FileHandle, IoStatusBlock, FileInformation, Length, FileInformationClass) */
     HFile *f = file_of(a[0]);
     if (!f) return STATUS_INVALID_HANDLE;
@@ -674,6 +681,7 @@ static uint32_t k_NtSetInformationFile(X86Ctx *c, const uint32_t *a) {
 }
 
 static uint32_t k_NtQueryFullAttributesFile(X86Ctx *c, const uint32_t *a) {
+    (void)c;
     /* (ObjectAttributes, FileNetworkOpenInformation*) */
     char guest[GPATH], host[MAX_PATH];
     guest_path(a[0], guest);
@@ -710,6 +718,7 @@ static uint32_t cluster_sectors(const HFile *f) {
 }
 
 static uint32_t k_NtQueryVolumeInformationFile(X86Ctx *c, const uint32_t *a) {
+    (void)c;
     /* (FileHandle, IoStatusBlock, FsInformation, Length, FsInformationClass) */
     HFile *f = file_of(a[0]);
     if (!f) return STATUS_INVALID_HANDLE;
@@ -717,7 +726,7 @@ static uint32_t k_NtQueryVolumeInformationFile(X86Ctx *c, const uint32_t *a) {
     uint64_t units = (partition_of(f) < 0 ? 0x1C0000000ull : partition_size(f)) / (spc * 512ull);
     uint64_t avail = units - units / 64; /* report the volume as almost empty */
     if (flog())
-        fprintf(stderr, "[file] volume info class %u on %s: %llu units of %u sectors, %llu free\n", a[4], f->guest,
+        fprintf(stderr, "[file] volume info class %u on %s: % PRIu64  units of %u sectors, % PRIu64  free\n", a[4], f->guest,
                 units, spc, avail);
     uint32_t out = a[2], len;
     switch (a[4]) {
@@ -834,6 +843,7 @@ static uint32_t k_NtQueryDirectoryFile(X86Ctx *c, const uint32_t *a) {
 }
 
 static uint32_t k_NtDeleteFile(X86Ctx *c, const uint32_t *a) {
+    (void)c;
     char guest[GPATH], host[MAX_PATH];
     guest_path(a[0], guest);
     if (!host_path(guest, host)) return STATUS_OBJECT_PATH_NOT_FOUND;
