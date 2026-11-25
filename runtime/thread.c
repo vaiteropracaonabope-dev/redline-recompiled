@@ -16,6 +16,7 @@
 #include "host_sync.h"
 #include "host_thread.h"
 #include "dispatcher_objects.h"
+#include "guest_handle_table.h"
 
 #define STATUS_SUCCESS 0x00000000u
 #define STATUS_USER_APC 0x000000C0u
@@ -46,6 +47,8 @@ static void wake(uint32_t o) { thread_object_wake(o); }
  * scanning arbitrary kernel memory for a matching dispatcher type. All accesses occur under the guest GIL. */
 static uint32_t g_mutants[MAX_TRACKED_MUTANTS];
 static uint32_t g_mutant_count;
+static RedlineGuestHandleTable g_guest_handle_table;
+static int g_guest_handle_table_initialized;
 
 static int track_mutant(uint32_t object) {
     if (g_mutant_count >= MAX_TRACKED_MUTANTS) return 0;
@@ -231,14 +234,32 @@ static int object_dereference(uint32_t o) {
     return 1;
 }
 
+/* Handles are opaque guest values. Ke* APIs continue to receive object pointers directly. */
+uint32_t thread_handle_create(uint32_t object, uint8_t type) {
+    if (!g_guest_handle_table_initialized || !object_valid(object) || OBJ_TYPE(object) != type) return 0;
+    uint32_t handle = 0;
+    return redline_guest_handle_insert(&g_guest_handle_table, object, type, &handle) ? handle : 0;
+}
+
+uint32_t thread_handle_object(X86Ctx *c, uint32_t handle) {
+    if (handle == NT_CURRENT_THREAD) return current_thread(c);
+    uint32_t object = 0;
+    if (!g_guest_handle_table_initialized ||
+        !redline_guest_handle_lookup(&g_guest_handle_table, handle, 0, &object)) return 0;
+    return object_valid(object) ? object : 0;
+}
+
 static uint32_t handle_obj(X86Ctx *c, uint32_t h) {
-    uint32_t o = h == NT_CURRENT_THREAD ? current_thread(c) : h;
-    return object_valid(o) ? o : 0;
+    return thread_handle_object(c, h);
 }
 
 /* ---------------- thread environment ---------------- */
 
 uint32_t thread_env_init(X86Ctx *c, uint32_t stack_size, uint32_t tls_size) {
+    if (!g_guest_handle_table_initialized) {
+        redline_guest_handles_init(&g_guest_handle_table);
+        g_guest_handle_table_initialized = 1;
+    }
     /* KPCR: NT_TIB 0x00..0x1B, SelfPcr 0x1C, Prcb 0x20, Irql 0x24, PrcbData (KPRCB) 0x28.. ; one per thread */
     uint32_t kpcr = kernel_alloc(0x400);
     uint32_t thread = kernel_alloc(0x200); /* KTHREAD; its DISPATCHER_HEADER signals on exit */
@@ -477,6 +498,13 @@ static uint32_t k_PsCreateSystemThreadEx(X86Ctx *c, const uint32_t *a) {
     uint32_t stack = a[2] ? (a[2] + 0xFFFF) & ~0xFFFFu : 0x10000;
     uint32_t thread = thread_env_init(&ts->ctx, stack, a[3]);
     M32(thread + 0x14) = 2; /* caller handle plus live execution reference */
+    uint32_t thread_handle = thread_handle_create(thread, OBJ_THREAD);
+    if (!thread_handle) {
+        object_dereference(thread);
+        object_dereference(thread);
+        free(ts);
+        return 0xC000009Au; /* STATUS_INSUFFICIENT_RESOURCES */
+    }
     ts->start_routine = a[5];
     ts->start_context = a[6];
     ts->system_routine = a[9];
@@ -491,7 +519,7 @@ static uint32_t k_PsCreateSystemThreadEx(X86Ctx *c, const uint32_t *a) {
         fprintf(stderr, "too many suspended guest threads\\n");
         fatal_exit(1);
     }
-    if (a[0]) M32(a[0]) = thread;
+    if (a[0]) M32(a[0]) = thread_handle;
     if (a[4]) M32(a[4]) = tid;
     fprintf(stderr, "[thread] created %08X start=%08X ctx=%08X sys=%08X%s\n", thread, a[5], a[6], a[9],
             (uint8_t)a[7] ? " (suspended)" : "");
@@ -504,7 +532,9 @@ static uint32_t k_PsTerminateSystemThread(X86Ctx *c, const uint32_t *a) {
 }
 
 static uint32_t k_NtResumeThread(X86Ctx *c, const uint32_t *a) {
-    RedlineThreadToken token = take_host_thread(handle_obj(c, a[0]));
+    uint32_t object = handle_obj(c, a[0]);
+    if (!object || OBJ_TYPE(object) != OBJ_THREAD) return STATUS_INVALID_HANDLE;
+    RedlineThreadToken token = take_host_thread(object);
     uint32_t prev = redline_thread_resume(token);
     if (a[1]) M32(a[1]) = prev;
     return STATUS_SUCCESS;
@@ -705,8 +735,14 @@ static uint32_t k_NtYieldExecution(X86Ctx *c, const uint32_t *a) {
 static uint32_t k_NtCreateEvent(X86Ctx *c, const uint32_t *a) {
     /* (*EventHandle, ObjectAttributes, EventType (0 notification, 1 sync), InitialState); names ignored */
     uint32_t o = kernel_alloc(0x20);
-    obj_init(o, a[2] ? OBJ_EVENT_SYNC : OBJ_EVENT_NOTIFY, 8, (uint8_t)a[3]);
-    M32(a[0]) = o;
+    uint8_t type = a[2] ? OBJ_EVENT_SYNC : OBJ_EVENT_NOTIFY;
+    obj_init(o, type, 8, (uint8_t)a[3]);
+    uint32_t handle = thread_handle_create(o, type);
+    if (!handle) {
+        object_dereference(o);
+        return 0xC000009Au; /* STATUS_INSUFFICIENT_RESOURCES */
+    }
+    M32(a[0]) = handle;
     return STATUS_SUCCESS;
 }
 static uint32_t k_NtCreateSemaphore(X86Ctx *c, const uint32_t *a) {
@@ -716,7 +752,12 @@ static uint32_t k_NtCreateSemaphore(X86Ctx *c, const uint32_t *a) {
     uint32_t o = kernel_alloc(0x20);
     obj_init(o, OBJ_SEMAPHORE, 8, (int32_t)a[2]);
     SEMAPHORE_LIMIT(o) = (int32_t)a[3];
-    M32(a[0]) = o;
+    uint32_t handle = thread_handle_create(o, OBJ_SEMAPHORE);
+    if (!handle) {
+        object_dereference(o);
+        return 0xC000009Au; /* STATUS_INSUFFICIENT_RESOURCES */
+    }
+    M32(a[0]) = handle;
     return STATUS_SUCCESS;
 }
 static uint32_t k_NtCreateMutant(X86Ctx *c, const uint32_t *a) {
@@ -725,8 +766,16 @@ static uint32_t k_NtCreateMutant(X86Ctx *c, const uint32_t *a) {
     uint32_t o = kernel_alloc(0x20);
     obj_init(o, OBJ_MUTANT, 8, (uint8_t)a[2] ? 0 : 1);
     if ((uint8_t)a[2]) MUTANT_OWNER(o) = current_thread(c);
-    if (!track_mutant(o)) return 0xC000009Au;
-    M32(a[0]) = o;
+    if (!track_mutant(o)) {
+        object_dereference(o);
+        return 0xC000009Au;
+    }
+    uint32_t handle = thread_handle_create(o, OBJ_MUTANT);
+    if (!handle) {
+        object_dereference(o);
+        return 0xC000009Au;
+    }
+    M32(a[0]) = handle;
     return STATUS_SUCCESS;
 }
 static uint32_t k_KeSetEvent(X86Ctx *c, const uint32_t *a) {
@@ -736,32 +785,42 @@ static uint32_t k_KeSetEvent(X86Ctx *c, const uint32_t *a) {
     return (uint32_t)prev;
 }
 static uint32_t k_NtSetEvent(X86Ctx *c, const uint32_t *a) {
-    int32_t prev = OBJ_SIGNAL(a[0]);
-    OBJ_SIGNAL(a[0]) = 1;
-    wake(a[0]);
+    uint32_t object = handle_obj(c, a[0]);
+    if (!object || (OBJ_TYPE(object) != OBJ_EVENT_NOTIFY && OBJ_TYPE(object) != OBJ_EVENT_SYNC))
+        return STATUS_INVALID_HANDLE;
+    int32_t prev = OBJ_SIGNAL(object);
+    OBJ_SIGNAL(object) = 1;
+    wake(object);
     if (a[1]) M32(a[1]) = (uint32_t)prev;
     return STATUS_SUCCESS;
 }
 static uint32_t k_NtClearEvent(X86Ctx *c, const uint32_t *a) {
-    OBJ_SIGNAL(a[0]) = 0;
+    uint32_t object = handle_obj(c, a[0]);
+    if (!object || (OBJ_TYPE(object) != OBJ_EVENT_NOTIFY && OBJ_TYPE(object) != OBJ_EVENT_SYNC))
+        return STATUS_INVALID_HANDLE;
+    OBJ_SIGNAL(object) = 0;
     return STATUS_SUCCESS;
 }
 static uint32_t k_NtReleaseSemaphore(X86Ctx *c, const uint32_t *a) {
     /* (Handle, ReleaseCount, *PreviousCount) */
-    int32_t prev = OBJ_SIGNAL(a[0]), next;
-    if (!redline_semaphore_release(prev, SEMAPHORE_LIMIT(a[0]), (int32_t)a[1], &next))
+    uint32_t object = handle_obj(c, a[0]);
+    if (!object || OBJ_TYPE(object) != OBJ_SEMAPHORE) return STATUS_INVALID_HANDLE;
+    int32_t prev = OBJ_SIGNAL(object), next;
+    if (!redline_semaphore_release(prev, SEMAPHORE_LIMIT(object), (int32_t)a[1], &next))
         return 0xC0000047u; /* STATUS_SEMAPHORE_LIMIT_EXCEEDED / invalid release count */
-    OBJ_SIGNAL(a[0]) = next;
-    wake(a[0]);
+    OBJ_SIGNAL(object) = next;
+    wake(object);
     if (a[2]) M32(a[2]) = (uint32_t)prev;
     return STATUS_SUCCESS;
 }
 static uint32_t k_NtReleaseMutant(X86Ctx *c, const uint32_t *a) {
     /* (Handle, *PreviousCount) */
+    uint32_t object = handle_obj(c, a[0]);
+    if (!object || OBJ_TYPE(object) != OBJ_MUTANT) return STATUS_INVALID_HANDLE;
     int32_t prev;
-    if (!redline_mutant_release(&OBJ_SIGNAL(a[0]), &MUTANT_OWNER(a[0]), current_thread(c), &prev))
+    if (!redline_mutant_release(&OBJ_SIGNAL(object), &MUTANT_OWNER(object), current_thread(c), &prev))
         return 0xC0000046u; /* STATUS_MUTANT_NOT_OWNED */
-    wake(a[0]);
+    wake(object);
     if (a[1]) M32(a[1]) = (uint32_t)prev;
     return STATUS_SUCCESS;
 }
@@ -777,15 +836,31 @@ static uint32_t k_ObfDereferenceObject(X86Ctx *c, const uint32_t *a) {
     return object_dereference(a[0]) ? STATUS_SUCCESS : STATUS_INVALID_HANDLE;
 }
 static uint32_t k_NtClose(X86Ctx *c, const uint32_t *a) {
-    uint32_t o = handle_obj(c, a[0]);
-    if (!o || o == current_thread(c)) return STATUS_INVALID_HANDLE;
-    return object_dereference(o) ? STATUS_SUCCESS : STATUS_INVALID_HANDLE;
+    (void)c;
+    uint32_t object = 0;
+    uint8_t type = 0;
+    if (!redline_guest_handle_close(&g_guest_handle_table, a[0], &object, &type))
+        return STATUS_INVALID_HANDLE;
+    (void)type;
+    return object_dereference(object) ? STATUS_SUCCESS : STATUS_INVALID_HANDLE;
 }
 static uint32_t k_NtDuplicateObject(X86Ctx *c, const uint32_t *a) {
-    /* Simplified Xbox HLE ABI: (SourceHandle, *TargetHandle, Options). */
-    uint32_t o = handle_obj(c, a[0]);
-    if (!o || !object_reference(o)) return STATUS_INVALID_HANDLE;
-    M32(a[1]) = o;
+    /* Xbox ABI: (SourceHandle, *TargetHandle, Options). */
+    if (!a[1]) return 0xC000000Du; /* STATUS_INVALID_PARAMETER */
+    uint32_t object = handle_obj(c, a[0]);
+    if (!object || !object_reference(object)) return STATUS_INVALID_HANDLE;
+    uint32_t target = 0;
+    if (!redline_guest_handle_insert(&g_guest_handle_table, object, OBJ_TYPE(object), &target)) {
+        object_dereference(object);
+        return 0xC000009Au; /* STATUS_INSUFFICIENT_RESOURCES */
+    }
+    M32(a[1]) = target;
+    if ((a[2] & 1u) && a[0] != NT_CURRENT_THREAD) {
+        uint32_t closed = 0;
+        uint8_t type = 0;
+        if (redline_guest_handle_close(&g_guest_handle_table, a[0], &closed, &type))
+            object_dereference(closed);
+    }
     return STATUS_SUCCESS;
 }
 
