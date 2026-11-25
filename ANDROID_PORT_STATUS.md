@@ -53,3 +53,11 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Run native ARM64 tests for disc paths, partition roots, partition subpaths, and invalid device names; GitHub Actions run 45519263315 passed the runtime test after correcting test-string escaping.
 - [ ] Finish the Android NDK cross-compile job for the new path tests; native ARM64 runtime passed, NDK job is still running.
 - [ ] Define a host filesystem operations interface (open/read/write/stat/enumerate/create/remove) and implement Android/POSIX behavior before porting the full HLE file layer. The current `runtime/file.c` still directly depends on Win32 handles, FindFirstFile, CreateFile, ReadFile, and related APIs.
+
+## Portable host filesystem interface
+
+- [x] Add `runtime/host_fs.h`: platform-neutral operations for open/close, sequential and positioned I/O, seek, truncate, sync, metadata, directory creation/removal, and directory enumeration.
+- [x] Add `runtime/host_fs_posix.c`: POSIX backend intended for Linux and Android; it uses ordinary host paths and does not yet replace the Win32 calls in `runtime/file.c`.
+- [x] Add `tests/host_fs_posix.c` covering file creation, read/write, positioned I/O, truncate, sync, metadata, directory enumeration, and cleanup.
+- [ ] Confirm Android NDK cross-compilation and native ARM64 runtime test for the new backend (GitHub Actions run 45519537601).
+- [ ] Add the Windows backend for this interface, then migrate `runtime/file.c` incrementally so existing Windows behavior remains testable.
