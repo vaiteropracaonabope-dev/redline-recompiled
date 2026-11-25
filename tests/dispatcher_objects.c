@@ -71,11 +71,32 @@ static void test_object_references(void) {
     assert(!redline_object_dereference(&refs) && refs == 1); /* close handle */
     assert(redline_object_dereference(&refs) && refs == 0); /* waiter releases final pin */
 }
+
+static void test_object_registry_remove(void) {
+    uint32_t objects[4] = {11, 22, 33, 0};
+    uint32_t count = 3;
+    assert(redline_object_registry_remove(objects, &count, 4, 22));
+    assert(count == 2 && objects[0] == 11 && objects[1] == 33 && objects[2] == 0);
+    assert(redline_object_registry_remove(objects, &count, 4, 11));
+    assert(count == 1 && objects[0] == 33 && objects[1] == 0);
+    assert(!redline_object_registry_remove(objects, &count, 4, 22));
+    assert(count == 1 && objects[0] == 33);
+    assert(redline_object_registry_remove(objects, &count, 4, 33));
+    assert(count == 0 && objects[0] == 0);
+    assert(!redline_object_registry_remove(objects, &count, 4, 33));
+    assert(!redline_object_registry_remove(NULL, &count, 4, 1));
+    assert(!redline_object_registry_remove(objects, NULL, 4, 1));
+    count = 5;
+    assert(!redline_object_registry_remove(objects, &count, 4, 11));
+    assert(count == 5);
+}
+
 int main(void) {
     test_semaphore();
     test_mutant_recursion();
     test_mutant_abandonment();
     test_object_references();
+    test_object_registry_remove();
     puts("dispatcher object tests passed");
     return 0;
 }
