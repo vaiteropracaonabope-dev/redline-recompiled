@@ -108,4 +108,7 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Complete Android NDK syntax-only checks for the POSIX thread backend; workflow run 45524290355 passed all three jobs.
 - [x] Add nanosecond timed waits to `host_sync`; POSIX preserves sub-millisecond deadlines and Windows rounds to milliseconds. Add timeout coverage to both backend tests.
 - [x] Replace the DPC thread Win32 event, high-resolution waitable timer, and multi-object wait with an atomic host-sync wake word and timed wait. `dpc_kick()` now signals through `redline_sync_store/wake_all`.
-- [ ] Continue migrating `runtime/thread.c`: thread naming/priority, GIL diagnostics/thread IDs, and other Win32 declarations/APIs remain. The file is not yet Android-buildable.
+- [x] Move host thread naming and best-effort priority changes behind `host_thread`; POSIX uses `pthread_setname_np` and a best-effort `SCHED_FIFO` request, while Windows uses `SetThreadDescription` and `SetThreadPriority`.
+- [x] Remove the direct `windows.h` dependency from `runtime/thread.c`; replace Win32 thread IDs/types with fixed-width types and `host_sync` IDs.
+- [x] Route watchdog marker-file deletion through `host_fs` and process termination through `fatal_exit`.
+- [ ] Remaining `thread.c` dependencies and behavior need a full Android NDK compile/integration pass; event-object scheduling semantics and platform-specific priority behavior still require runtime validation.
