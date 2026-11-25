@@ -19,7 +19,7 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 
 - [x] Create a separate `android-port` branch so the Windows `main` branch remains untouched.
 - [x] Inspect the existing build script and the main platform-specific runtime files.
-- [ ] Inventory all Win32, Direct3D, WASAPI, and x86-64 assumptions across the runtime and generated game code.
+- [x] Inventory the main Win32, Direct3D, WASAPI, and x86-64 assumptions across the runtime and build/lifter sources (see `ANDROID_PORT_AUDIT.md`).
 - [ ] Confirm whether the recompilation toolchain can emit AArch64 and identify the required lifter changes.
 - [ ] Design a platform abstraction boundary before replacing platform APIs.
 - [ ] Add an Android NDK/Gradle skeleton only after the native entry points and graphics strategy are known.
