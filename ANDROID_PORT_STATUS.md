@@ -63,7 +63,7 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Add and test the Windows backend for this interface.
 - [x] Integrate the interface into `runtime/file.c` for mod-directory discovery, recursive mod-file enumeration, HDD partition directory creation, recursive directory cleanup, and file/directory deletion.
 - [x] Migrate per-handle Xbox directory enumeration to `redline_fs_dir_open/read/close`, with case-insensitive `*`/`?` matching and the Windows-compatible `*.*` all-files behavior.
-- [ ] Migrate the remaining Xbox HLE file operations incrementally; metadata/timestamp queries and timestamp updates still contain direct Win32 calls.
+- [x] Route Xbox file metadata queries and timestamp updates through `host_fs`; POSIX exposes access/modified times and explicitly reports creation time as unavailable, while Windows preserves creation/access/modified timestamps.
 
 ## Dual-platform host filesystem backend groundwork
 
@@ -84,4 +84,4 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Route Xbox file open/create, sequential and positioned read/write, flush, close, seek/query-position, truncate/end-of-file, delete-on-close, `NtDeleteFile`, HDD partition directory creation, and recursive partition cleanup through `host_fs`.
 - [x] Preserve positioned-read EOF behavior across POSIX and Windows; both backend tests assert that a read beyond EOF returns zero bytes.
 - [x] Add a Windows CI compile-only check for `runtime/file.c`; workflow run 45520963051 passed alongside ARM64 native/POSIX tests and Android NDK header checks.
-- [ ] Remove remaining Win32 dependencies from the HLE: file metadata/timestamp queries, timestamp updates, `windows.h` types/includes, and other Windows-specific helpers remain. The directory scan state and `NtQueryDirectoryFile` enumeration now use `host_fs`, but the full `runtime/file.c` is not yet Android-compilable.
+- [ ] Remove remaining Win32 dependencies from the HLE: `windows.h` types/includes, performance-counter timing, and other Windows-specific helpers remain. File metadata/timestamp queries and directory enumeration now use `host_fs`; the full `runtime/file.c` is not yet Android-compilable.
