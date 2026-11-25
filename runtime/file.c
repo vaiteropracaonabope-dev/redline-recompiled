@@ -23,6 +23,16 @@
 #define FILE_ATTRIBUTE_DIRECTORY 0x00000010u
 typedef struct { uint32_t dwLowDateTime, dwHighDateTime; } RedlineFileTime;
 
+static int ascii_case_ncompare(const char *a, const char *b, size_t n) {
+    while (n--) { unsigned char x=(unsigned char)*a++, y=(unsigned char)*b++; int lx=tolower(x), ly=tolower(y); if(lx!=ly || !x || !y) return lx-ly; }
+    return 0;
+}
+static int ascii_case_compare(const char *a, const char *b) {
+    while (*a && *b) { int x=tolower((unsigned char)*a++), y=tolower((unsigned char)*b++); if(x!=y) return x-y; }
+    return tolower((unsigned char)*a)-tolower((unsigned char)*b);
+}
+static char *duplicate_string(const char *s) { size_t n=strlen(s)+1; char *copy=malloc(n); if(copy) memcpy(copy,s,n); return copy; }
+
 #define STATUS_SUCCESS 0x00000000u
 #define STATUS_NO_MORE_FILES 0x80000006u
 #define STATUS_END_OF_FILE 0xC0000011u
@@ -77,7 +87,7 @@ static void guest_path(uint32_t oa, char *out) {
     else snprintf(out, GPATH, "%s", name);
 }
 
-static int starts_with_i(const char *s, const char *prefix) { return !_strnicmp(s, prefix, strlen(prefix)); }
+static int starts_with_i(const char *s, const char *prefix) { return !ascii_case_ncompare(s, prefix, strlen(prefix)); }
 
 /* "\Device\Harddisk0\PartitionN" with nothing (or just "\") after it: the whole volume */
 static int is_partition_root(const char *guest) {
@@ -126,7 +136,7 @@ static void mod_walk(const char *dir, const char *rel, int mod, int *cap) {
                 g_modfiles = grown;
                 *cap = next_cap;
             }
-            char *rel_copy = _strdup(subrel), *host_copy = _strdup(sub);
+            char *rel_copy = duplicate_string(subrel), *host_copy = _strdup(sub);
             if (!rel_copy || !host_copy) {
                 free(rel_copy);
                 free(host_copy);
@@ -139,7 +149,7 @@ static void mod_walk(const char *dir, const char *rel, int mod, int *cap) {
 }
 static int modfile_cmp(const void *a, const void *b) {
     const ModFile *x = a, *y = b;
-    int c = _stricmp(x->rel, y->rel);
+    int c = ascii_case_compare(x->rel, y->rel);
     return c ? c : x->mod - y->mod;
 }
 static int name_cmp(const void *a, const void *b) { return _stricmp(a, b); }
@@ -551,8 +561,8 @@ static uint32_t k_NtFlushBuffersFile(X86Ctx *c, const uint32_t *a) {
 
 /* ---------------- information ---------------- */
 
-static FILETIME filetime_from_unix_seconds(int64_t seconds) {
-    FILETIME result;
+static RedlineFileTime filetime_from_unix_seconds(int64_t seconds) {
+    RedlineFileTime result;
     uint64_t ticks;
     if (!seconds) { result.dwLowDateTime = result.dwHighDateTime = 0; return result; }
     ticks = ((uint64_t)(seconds + 11644473600ll)) * 10000000ull;
@@ -562,9 +572,9 @@ static FILETIME filetime_from_unix_seconds(int64_t seconds) {
 }
 
 static void network_open_info(uint32_t va, const RedlineFsInfo *info) {
-    FILETIME created = filetime_from_unix_seconds(info->created_seconds);
-    FILETIME accessed = filetime_from_unix_seconds(info->accessed_seconds);
-    FILETIME modified = filetime_from_unix_seconds(info->modified_seconds);
+    RedlineFileTime created = filetime_from_unix_seconds(info->created_seconds);
+    RedlineFileTime accessed = filetime_from_unix_seconds(info->accessed_seconds);
+    RedlineFileTime modified = filetime_from_unix_seconds(info->modified_seconds);
     put_time(va + 0x00, created);
     put_time(va + 0x08, accessed);
     put_time(va + 0x10, modified);
@@ -584,9 +594,9 @@ static uint32_t k_NtQueryInformationFile(X86Ctx *c, const uint32_t *a) {
     uint32_t out = a[2], len = 0;
     switch (a[4]) {
     case 4: { /* FileBasicInformation */
-        FILETIME created = filetime_from_unix_seconds(info.created_seconds);
-        FILETIME accessed = filetime_from_unix_seconds(info.accessed_seconds);
-        FILETIME modified = filetime_from_unix_seconds(info.modified_seconds);
+        RedlineFileTime created = filetime_from_unix_seconds(info.created_seconds);
+        RedlineFileTime accessed = filetime_from_unix_seconds(info.accessed_seconds);
+        RedlineFileTime modified = filetime_from_unix_seconds(info.modified_seconds);
         put_time(out, created); put_time(out + 8, accessed);
         put_time(out + 16, modified); put_time(out + 24, modified);
         M32(out + 32) = info.is_directory ? FILE_ATTRIBUTE_DIRECTORY : FILE_ATTRIBUTE_NORMAL;
@@ -810,7 +820,7 @@ static uint32_t k_NtQueryDirectoryFile(X86Ctx *c, const uint32_t *a) {
     uint32_t out = a[5], name_len = (uint32_t)strlen(entry.name);
     if (0x40 + name_len > a[6]) return STATUS_INVALID_PARAMETER;
     memset(g_mem + out, 0, 0x40);
-    FILETIME modified = filetime_from_unix_seconds(info.modified_seconds);
+    RedlineFileTime modified = filetime_from_unix_seconds(info.modified_seconds);
     put_time(out + 0x18, modified);
     put_time(out + 0x20, modified);
     M64(out + 0x28) = info.size;
