@@ -8,9 +8,12 @@
 static volatile int32_t g_started;
 static void worker(void *unused) {
     (void)unused;
+    redline_thread_set_name("redline-test");
     redline_sync_store(&g_started, 1);
 }
 int main(void) {
+    redline_thread_set_name("redline-main");
+    redline_thread_set_priority(REDLINE_THREAD_PRIORITY_NORMAL);
     uint32_t id = 0;
     RedlineThreadToken token = 0;
     assert(redline_thread_create(worker, NULL, 65536, 1, &id, &token));
