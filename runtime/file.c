@@ -487,44 +487,35 @@ static void empty_dir(const char *dir) {
 static uint32_t rw(X86Ctx *c, const uint32_t *a, int write) {
     /* (FileHandle, Event, ApcRoutine, ApcContext, IoStatusBlock, Buffer, Length, *ByteOffset) */
     HFile *f = file_of(a[0]);
-    if (!f || f->h == INVALID_HANDLE_VALUE) return STATUS_INVALID_HANDLE; /* dirs only via a raw image */
-    DWORD done = 0;
-    BOOL ok;
-    if (!write && a[7]) { /* a read at an offset leaves the guest lock while the disk works (a hard drive stalled
-                           * every thread); positioned, so another thread's use of the handle cannot move it */
+    if (!f || f->h == (RedlineFsHandle)-1) return STATUS_INVALID_HANDLE; /* dirs only via a raw image */
+    int64_t transferred;
+    int io_error = 0;
+    if (a[7]) {
+        /* Positioned I/O must not disturb another thread's file pointer. */
         uint64_t at = M64(a[7]);
-        OVERLAPPED o = {.Offset = (DWORD)at, .OffsetHigh = (DWORD)(at >> 32)};
-        HANDLE h = f->h;
         uint8_t *buf = g_mem + a[5];
-        DWORD len = a[6];
         gil_release();
-        ok = ReadFile(h, buf, len, &done, &o);
-        DWORD err = GetLastError();
+        transferred = write ? redline_fs_pwrite(f->h, buf, a[6], at)
+                            : redline_fs_pread(f->h, buf, a[6], at);
+        io_error = errno;
         gil_acquire();
-        if (!ok && err == ERROR_HANDLE_EOF) ok = TRUE, done = 0; /* at the end: 0 bytes, as an unpositioned read gives */
-        else SetLastError(err);
     } else {
-        if (a[7]) {
-            LARGE_INTEGER off;
-            off.QuadPart = (LONGLONG)M64(a[7]);
-            SetFilePointerEx(f->h, off, NULL, FILE_BEGIN);
-        }
-        ok = write ? WriteFile(f->h, g_mem + a[5], a[6], &done, NULL) : ReadFile(f->h, g_mem + a[5], a[6], &done, NULL);
+        transferred = write ? redline_fs_write(f->h, g_mem + a[5], a[6])
+                            : redline_fs_read(f->h, g_mem + a[5], a[6]);
+        io_error = errno;
     }
-    uint32_t st = !ok ? status_from_win32(GetLastError()) : (!write && a[6] && !done) ? STATUS_END_OF_FILE : STATUS_SUCCESS;
+    int ok = transferred >= 0;
+    uint32_t done = ok ? (uint32_t)transferred : 0;
+    uint32_t st = !ok ? status_from_errno(io_error) : (!write && a[6] && !done) ? STATUS_END_OF_FILE : STATUS_SUCCESS;
     if (write && ok && f->unbuffered && f->has_eof) {
         /* FATX: an unbuffered write that runs past the end of file but stays inside the file's last allocated
          * cluster does not move the end of file (installers presize to the exact size, then write whole
          * sectors). Windows would extend the file, so put the title's end of file back. */
-        LARGE_INTEGER size;
+        RedlineFsInfo size;
         int64_t cluster = cluster_sectors(f) * 512ll, alloc_end = (f->eof + cluster - 1) / cluster * cluster;
-        if (GetFileSizeEx(f->h, &size) && size.QuadPart > f->eof && size.QuadPart <= alloc_end) {
-            LARGE_INTEGER pos, end = {.QuadPart = f->eof}, zero = {0};
-            SetFilePointerEx(f->h, zero, &pos, FILE_CURRENT);
-            SetFilePointerEx(f->h, end, NULL, FILE_BEGIN);
-            SetEndOfFile(f->h);
-            SetFilePointerEx(f->h, pos, NULL, FILE_BEGIN);
-        }
+        if (!redline_fs_stat(f->host, &size) && size.size > (uint64_t)f->eof &&
+            size.size <= (uint64_t)alloc_end)
+            redline_fs_truncate(f->h, (uint64_t)f->eof);
     }
     if (write && ok && a[7] && !M64(a[7]) && done >= 4 && !memcmp(g_mem + a[5], "FATX", 4) && is_partition_root(f->guest) &&
         partition_of(f) >= 3) { /* a new FATX superblock: the title formatted a cache partition (Forza does N: at every
@@ -553,7 +544,7 @@ static uint32_t k_NtReadFile(X86Ctx *c, const uint32_t *a) { return rw(c, a, 0);
 static uint32_t k_NtWriteFile(X86Ctx *c, const uint32_t *a) { return rw(c, a, 1); }
 static uint32_t k_NtFlushBuffersFile(X86Ctx *c, const uint32_t *a) {
     HFile *f = file_of(a[0]);
-    if (f && f->h != INVALID_HANDLE_VALUE) FlushFileBuffers(f->h);
+    if (f && f->h != (RedlineFsHandle)-1) redline_fs_sync(f->h);
     iosb(a[1], STATUS_SUCCESS, 0);
     return STATUS_SUCCESS;
 }
@@ -592,9 +583,8 @@ static uint32_t k_NtQueryInformationFile(X86Ctx *c, const uint32_t *a) {
         M8(out + 20) = 0; M8(out + 21) = (uint8_t)f->is_dir; len = 24;
         break;
     case 14: { /* FilePositionInformation */
-        LARGE_INTEGER zero = {0}, pos = {0};
-        if (!f->is_dir) SetFilePointerEx(f->h, zero, &pos, FILE_CURRENT);
-        M64(out) = (uint64_t)pos.QuadPart; len = 8;
+        int64_t pos = !f->is_dir ? redline_fs_seek(f->h, 0, SEEK_CUR) : 0;
+        M64(out) = pos < 0 ? 0 : (uint64_t)pos; len = 8;
         break;
     }
     case 34: /* FileNetworkOpenInformation */
@@ -624,29 +614,28 @@ static uint32_t k_NtSetInformationFile(X86Ctx *c, const uint32_t *a) {
             t[i].dwHighDateTime = (DWORD)(v >> 32);
             p[i] = v && v != ~0ull ? &t[i] : NULL;
         }
-        if (f->h != INVALID_HANDLE_VALUE && (p[0] || p[1] || p[2]) && !SetFileTime(f->h, p[0], p[1], p[2]) && ktrace())
+        if (f->h != INVALID_HANDLE_VALUE && (p[0] || p[1] || p[2]) && !SetFileTime((HANDLE)(intptr_t)f->h, p[0], p[1], p[2]) && ktrace())
             fprintf(stderr, "[file] SetFileTime on %s failed (%lu)\n", f->guest, GetLastError());
         break;
     }
     case 14: /* FilePositionInformation */
         v.QuadPart = (LONGLONG)M64(a[2]);
-        SetFilePointerEx(f->h, v, NULL, FILE_BEGIN);
+        redline_fs_seek(f->h, v.QuadPart, SEEK_SET);
         break;
     case 19:   /* FileAllocationInformation: reserves space; only shrinks the file if it is smaller than it */
     case 20: { /* FileEndOfFileInformation */
-        LARGE_INTEGER zero = {0}, pos, size;
+        RedlineFsInfo size;
         v.QuadPart = (LONGLONG)M64(a[2]);
-        if (a[4] == 19 && (!GetFileSizeEx(f->h, &size) || v.QuadPart >= size.QuadPart)) break;
+        if (v.QuadPart < 0) return STATUS_INVALID_PARAMETER;
+        if (a[4] == 19 && (!f->host[0] || redline_fs_stat(f->host, &size) ||
+                           (uint64_t)v.QuadPart >= size.size)) break;
         if (a[4] == 20) f->has_eof = 1, f->eof = v.QuadPart;
-        SetFilePointerEx(f->h, zero, &pos, FILE_CURRENT);
-        SetFilePointerEx(f->h, v, NULL, FILE_BEGIN);
-        SetEndOfFile(f->h);
-        SetFilePointerEx(f->h, pos, NULL, FILE_BEGIN);
+        if (f->h != (RedlineFsHandle)-1) redline_fs_truncate(f->h, (uint64_t)v.QuadPart);
         break;
     }
     case 13: /* FileDispositionInformation: delete when closed */
         if (M8(a[2])) {
-            if (f->h != INVALID_HANDLE_VALUE) { CloseHandle(f->h); f->h = INVALID_HANDLE_VALUE; }
+            if (f->h != (RedlineFsHandle)-1) { redline_fs_close(f->h); f->h = (RedlineFsHandle)-1; }
             if (f->is_dir ? !RemoveDirectoryA(f->host) : !DeleteFileA(f->host)) return status_from_win32(GetLastError());
         }
         break;
