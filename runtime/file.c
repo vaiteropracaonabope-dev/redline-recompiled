@@ -726,7 +726,7 @@ static uint32_t k_NtQueryVolumeInformationFile(X86Ctx *c, const uint32_t *a) {
     uint64_t units = (partition_of(f) < 0 ? 0x1C0000000ull : partition_size(f)) / (spc * 512ull);
     uint64_t avail = units - units / 64; /* report the volume as almost empty */
     if (flog())
-        fprintf(stderr, "[file] volume info class %u on %s: % PRIu64  units of %u sectors, % PRIu64  free\n", a[4], f->guest,
+        fprintf(stderr, "[file] volume info class %u on %s: %" PRIu64 " units of %u sectors, %" PRIu64 " free\n", a[4], f->guest,
                 units, spc, avail);
     uint32_t out = a[2], len;
     switch (a[4]) {
