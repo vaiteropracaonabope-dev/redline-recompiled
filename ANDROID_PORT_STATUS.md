@@ -98,5 +98,7 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Add a POSIX implementation in `runtime/host_sync_posix.c` using C atomics, pthread condition variables, and POSIX clocks; intended for Linux/Android.
 - [x] Add a Windows implementation in `runtime/host_sync_win32.c` using Interlocked, WaitOnAddress, and Windows clocks.
 - [x] Add POSIX and Windows smoke tests and wire them into the ARM64/Windows CI workflow.
-- [ ] Confirm the new host synchronization tests in workflow run 45523373515.
-- [ ] Migrate `runtime/thread.c` incrementally to this interface. The file still uses Win32 thread creation, waitable timers, events, thread naming/priority, and other Windows APIs; it is not yet Android-buildable.
+- [x] Confirm workflow run 45523373515: ARM64 native, Android NDK header check, and Windows filesystem backend all passed for the initial host synchronization groundwork.
+- [ ] Confirm the expanded Windows host synchronization test and guest-lock integration in the latest CI run.
+- [x] Route the guest lock (GIL) ticket counters, waiter count, wakeups, urgent handoff, and 1 ms scheduling quantum through `host_sync`; GIL timing now uses the portable monotonic nanosecond clock.
+- [ ] Continue migrating `runtime/thread.c`: host thread creation, suspended/resume behavior, events, waitable timers, thread naming/priority, and several timeout paths still use Win32 APIs. The file is not yet Android-buildable.
