@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <errno.h>
 
 #include "xbox.h"
 #include "host_path.h"
@@ -32,8 +33,8 @@
 
 typedef struct {
     uint32_t obj;
-    HANDLE h;
-    HANDLE find; /* directory enumeration state */
+    RedlineFsHandle h;
+    HANDLE find; /* directory enumeration state remains Windows-specific for now */
     int is_dir;
     int unbuffered;   /* opened with FILE_NO_INTERMEDIATE_BUFFERING: whole-sector writes */
     int has_eof;      /* end of file as the title last set it (or found at open) ... */
@@ -262,6 +263,29 @@ static uint32_t status_from_win32(DWORD e) {
     }
 }
 
+static uint32_t status_from_errno(int e) {
+    switch (e) {
+    case ENOENT: return STATUS_OBJECT_NAME_NOT_FOUND;
+#ifdef ENOTDIR
+    case ENOTDIR: return STATUS_OBJECT_PATH_NOT_FOUND;
+#endif
+    case EEXIST: return STATUS_OBJECT_NAME_COLLISION;
+    case EACCES:
+#ifdef EPERM
+    case EPERM:
+#endif
+        return STATUS_ACCESS_DENIED;
+#ifdef EISDIR
+    case EISDIR: return STATUS_FILE_IS_A_DIRECTORY;
+#endif
+    case EBADF: return STATUS_INVALID_HANDLE;
+#ifdef ENOSPC
+    case ENOSPC: return 0xC000007Fu; /* STATUS_DISK_FULL */
+#endif
+    default: return 0xC0000001u; /* STATUS_UNSUCCESSFUL */
+    }
+}
+
 static void iosb(uint32_t p, uint32_t status, uint32_t info) {
     if (!p) return;
     M32(p) = status;
@@ -299,20 +323,28 @@ static uint32_t open_file(X86Ctx *c, uint32_t out_handle, uint32_t access, uint3
      * which held up every other thread, the video's included. One slower than 20 ms is logged. */
     LARGE_INTEGER q0, q1, qf;
     QueryPerformanceCounter(&q0);
+    RedlineFsInfo host_info;
     gil_release();
-    DWORD attr = GetFileAttributesA(host);
+    int stat_result = redline_fs_stat(host, &host_info);
+    int stat_error = errno;
     gil_acquire();
-    int exists = attr != INVALID_FILE_ATTRIBUTES, is_dir = exists && (attr & FILE_ATTRIBUTE_DIRECTORY);
+    int exists = stat_result == 0, is_dir = exists && host_info.is_directory;
     uint32_t info = 1; /* FILE_OPENED */
 
     if (want_dir && !exists && (disposition == 2 || disposition == 3)) { /* FILE_CREATE / FILE_OPEN_IF */
-        if (!CreateDirectoryA(host, NULL)) {
-            uint32_t st = status_from_win32(GetLastError());
+        gil_release();
+        int mkdir_result = redline_fs_mkdir(host, 0777);
+        int mkdir_error = errno;
+        gil_acquire();
+        if (mkdir_result) {
+            uint32_t st = status_from_errno(mkdir_error);
             if (flog()) fprintf(stderr, "[file] mkdir %s -> %08X\n", guest, st);
             return st;
         }
         is_dir = exists = 1;
         info = 2; /* FILE_CREATED */
+    } else if (!exists && stat_error != ENOENT) {
+        return status_from_errno(stat_error);
     }
     if (exists && is_dir && (options & 0x40 /* FILE_NON_DIRECTORY_FILE */)) {
         if (flog()) fprintf(stderr, "[file] open %s -> is a directory\n", guest);
@@ -328,23 +360,28 @@ static uint32_t open_file(X86Ctx *c, uint32_t out_handle, uint32_t access, uint3
         return STATUS_OBJECT_NAME_COLLISION;
     }
 
-    HANDLE h = INVALID_HANDLE_VALUE;
+    RedlineFsHandle h = (RedlineFsHandle)-1;
     if (!is_dir) {
-        static const DWORD dispositions[] = {CREATE_ALWAYS, OPEN_EXISTING, CREATE_NEW, OPEN_ALWAYS,
-                                             TRUNCATE_EXISTING, CREATE_ALWAYS};
-        DWORD disp = disposition < 6 ? dispositions[disposition] : OPEN_EXISTING;
+        unsigned fs_flags = REDLINE_FS_READ;
         int writable = (access & (0x40000000u /* GENERIC_WRITE */ | 0x2 /* FILE_WRITE_DATA */ | 0x4 | 0x10000000u)) != 0;
         if (dev == 1) writable = 0; /* never write into the extracted disc */
+        if (writable) fs_flags |= REDLINE_FS_WRITE;
+        switch (disposition) {
+        case 0: case 5: fs_flags |= REDLINE_FS_CREATE | REDLINE_FS_TRUNC; break; /* FILE_SUPERSEDE / FILE_OVERWRITE_IF */
+        case 2: fs_flags |= REDLINE_FS_CREATE | REDLINE_FS_EXCL; break; /* FILE_CREATE */
+        case 3: fs_flags |= REDLINE_FS_CREATE; break; /* FILE_OPEN_IF */
+        case 4: fs_flags |= REDLINE_FS_TRUNC; break; /* FILE_OVERWRITE */
+        default: break; /* FILE_OPEN */
+        }
         gil_release();
-        h = CreateFileA(host, GENERIC_READ | (writable ? GENERIC_WRITE : 0),
-                        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, disp, FILE_ATTRIBUTE_NORMAL, NULL);
-        DWORD err = GetLastError();
+        h = redline_fs_open(host, fs_flags, 0666);
+        int open_error = errno;
         gil_acquire();
         QueryPerformanceCounter(&q1), QueryPerformanceFrequency(&qf);
         double ms = (q1.QuadPart - q0.QuadPart) * 1000.0 / qf.QuadPart;
         if (ms > 20) fprintf(stderr, "[file] opening %s took %.0f ms\n", guest, ms);
-        if (h == INVALID_HANDLE_VALUE) {
-            uint32_t st = status_from_win32(err);
+        if (h == (RedlineFsHandle)-1) {
+            uint32_t st = status_from_errno(open_error);
             iosb(iosb_va, st, exists ? 1 : 5);
             if (flog())
                 fprintf(stderr, "[file] open %s -> %08X (disposition %u, options %08X, access %08X)\n", guest, st,
@@ -361,13 +398,13 @@ static uint32_t open_file(X86Ctx *c, uint32_t out_handle, uint32_t access, uint3
         /* raw volume access (cache-partition table, formatting) goes to a sector image beside the folder */
         char raw[MAX_PATH];
         snprintf(raw, sizeof raw, "%s.raw", host);
-        h = CreateFileA(raw, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS,
-                        FILE_ATTRIBUTE_NORMAL, NULL);
-        LARGE_INTEGER size;
-        if (h != INVALID_HANDLE_VALUE && GetFileSizeEx(h, &size) && !size.QuadPart) {
-            size.QuadPart = 16 << 20; /* blank disk: reads return zeros like an unformatted drive */
-            SetFilePointerEx(h, size, NULL, FILE_BEGIN);
-            SetEndOfFile(h);
+        h = redline_fs_open(raw, REDLINE_FS_READ | REDLINE_FS_WRITE | REDLINE_FS_CREATE, 0666);
+        if (h != (RedlineFsHandle)-1) {
+            RedlineFsInfo raw_info;
+            if (!redline_fs_stat(raw, &raw_info) && !raw_info.size) {
+                redline_fs_truncate(h, 16u << 20); /* blank disk reads as zeros like an unformatted drive */
+                redline_fs_seek(h, 16u << 20, SEEK_SET);
+            }
         }
     }
 
@@ -390,9 +427,9 @@ static uint32_t open_file(X86Ctx *c, uint32_t out_handle, uint32_t access, uint3
     M32(fs_ctx + 0x1C) = i + 1;
     M32(obj + 8) = fs_ctx;
     g_files[i] = (HFile){obj, h, INVALID_HANDLE_VALUE, is_dir};
-    LARGE_INTEGER size;
-    if ((options & 8) && !is_dir && GetFileSizeEx(h, &size)) /* FILE_NO_INTERMEDIATE_BUFFERING */
-        g_files[i].unbuffered = 1, g_files[i].has_eof = 1, g_files[i].eof = size.QuadPart;
+    RedlineFsInfo opened_info;
+    if ((options & 8) && !is_dir && !redline_fs_stat(host, &opened_info)) /* FILE_NO_INTERMEDIATE_BUFFERING */
+        g_files[i].unbuffered = 1, g_files[i].has_eof = 1, g_files[i].eof = (int64_t)opened_info.size;
     snprintf(g_files[i].guest, GPATH, "%s", guest);
     snprintf(g_files[i].host, MAX_PATH, "%s", host);
     M32(out_handle) = obj;
@@ -414,7 +451,7 @@ static uint32_t k_NtOpenFile(X86Ctx *c, const uint32_t *a) {
 int file_close(uint32_t handle) {
     HFile *f = file_of(handle);
     if (!f) return 0;
-    if (f->h != INVALID_HANDLE_VALUE) CloseHandle(f->h);
+    if (f->h != (RedlineFsHandle)-1) redline_fs_close(f->h);
     if (f->find != INVALID_HANDLE_VALUE) FindClose(f->find);
     memset(f, 0, sizeof *f);
     M8(handle) = 0;
