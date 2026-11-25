@@ -1,6 +1,8 @@
 /* Runtime checks for ARM64 host CPU helpers.
  * This is not a full runtime or game build. */
 #include "x86.h"
+#include "mmx_reference.h"
+#include <stdio.h>
 
 int main(void) {
     float lanes[4] = {1.0f, 2.0f, 3.0f, 4.0f};
@@ -22,6 +24,7 @@ int main(void) {
         if (memcmp(out, right, sizeof out) != 0) return 3;
     }
 
+    /* Preserve the original known-answer checks for quick, readable failures. */
     if (mmx(MX_PADDUSB, 0x00FF00F0FF000000ull, 0x0002000F01000000ull) !=
         0x00FF00FFFF000000ull) return 4;
     if (mmx(MX_PUNPCKLBW, 0x0000000044332211ull, 0x00000000DDCCBBAAull) !=
@@ -32,6 +35,41 @@ int main(void) {
         (((uint64_t)(2 * 6 + 3 * 7) << 32) | (4 * 8 + 5 * 9))) return 7;
     if (mmx(MX_PACKUSWB, 0x0100FFFF00800010ull, 0) !=
         0x00000000FF008010ull) return 8;
+
+    /* Differentially exercise every MMX opcode against the independent oracle. */
+    {
+        static const uint64_t edge[] = {
+            0, ~0ull, 0x8000800080008000ull, 0x7FFF7FFF7FFF7FFFull,
+            0x80808080807F7F7Full, 0x00FF00FF00FF00FFull,
+            0x8000000080000000ull, 0x0123456789ABCDEFull
+        };
+        uint64_t rnd = 0x9E3779B97F4A7C15ull;
+        unsigned checks = 0;
+        for (int op = MX_PADDB; op <= MX_PSRAD; op++) {
+            for (int i = 0; i < 600; i++) {
+                uint64_t x, y;
+                if (i < 64) {
+                    x = edge[i & 7];
+                    y = edge[i >> 3];
+                } else {
+                    rnd ^= rnd << 13; rnd ^= rnd >> 7; rnd ^= rnd << 17; x = rnd;
+                    rnd ^= rnd << 13; rnd ^= rnd >> 7; rnd ^= rnd << 17; y = rnd;
+                }
+                if (op >= MX_PSLLW) y = (uint64_t)(i % 71);
+                uint64_t actual = mmx(op, x, y);
+                uint64_t expected = mmx_ref(op, x, y);
+                if (actual != expected) {
+                    fprintf(stderr,
+                        "ARM64 MMX mismatch: op=%d a=%016llX b=%016llX got=%016llX expected=%016llX\n",
+                        op, (unsigned long long)x, (unsigned long long)y,
+                        (unsigned long long)actual, (unsigned long long)expected);
+                    return 9;
+                }
+                checks++;
+            }
+        }
+        if (checks != (unsigned)(MX_PSRAD - MX_PADDB + 1) * 600u) return 10;
+    }
 
     return 0;
 }
