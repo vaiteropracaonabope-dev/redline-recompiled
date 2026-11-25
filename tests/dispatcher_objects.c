@@ -62,10 +62,11 @@ static void test_object_references(void) {
     refs = UINT32_MAX;
     assert(!redline_object_reference(&refs) && refs == UINT32_MAX);
 }
-\nint main(void) {
+int main(void) {
     test_semaphore();
     test_mutant_recursion();
-    test_mutant_abandonment();\n    test_object_references();
+    test_mutant_abandonment();
+    test_object_references();
     puts("dispatcher object tests passed");
     return 0;
 }
