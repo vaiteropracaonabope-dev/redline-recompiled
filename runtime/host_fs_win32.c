@@ -93,6 +93,12 @@ static int redline_fs_overlapped(HANDLE handle, void *buffer, size_t bytes, uint
     if (!ok && GetLastError() == ERROR_IO_PENDING)
         ok = GetOverlappedResult(handle, &operation, &done, TRUE);
     if (!ok) {
+        DWORD error = GetLastError();
+        if (!writing && error == ERROR_HANDLE_EOF) {
+            *result = 0;
+            return 0;
+        }
+        SetLastError(error);
         redline_fs_set_errno();
         return -1;
     }
