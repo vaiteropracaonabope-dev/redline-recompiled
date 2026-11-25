@@ -837,6 +837,7 @@ static uint32_t k_ObfDereferenceObject(X86Ctx *c, const uint32_t *a) {
 }
 static uint32_t k_NtClose(X86Ctx *c, const uint32_t *a) {
     (void)c;
+    if (file_close_special_handle(a[0])) return STATUS_SUCCESS;
     uint32_t object = 0;
     uint8_t type = 0;
     if (!redline_guest_handle_close(&g_guest_handle_table, a[0], &object, &type))
