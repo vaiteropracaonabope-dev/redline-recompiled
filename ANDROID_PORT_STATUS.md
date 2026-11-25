@@ -78,8 +78,8 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Fix the first MSVC compile warning by replacing deprecated `strcpy` with a bounded copy.
 - [x] Make Windows truncate preserve the current file offset, matching the POSIX backend contract.
 - [x] Add `tests/host_fs_win32.c` to exercise create/read/write/positioned I/O/truncate/stat/directory enumeration and cleanup.
-- [x] Compile and run the Windows backend runtime test in GitHub Actions; the latest workflow run 45520455565 passed. The workflow now compiles the two source files to distinct object names before linking.
-- [x] Integrate shared host filesystem directory enumeration and directory creation into mod discovery in the Xbox HLE.
+- [x] Compile and run the Windows backend runtime test in GitHub Actions; latest workflow run 45520963051 passed. Backend and test sources use distinct object names before linking.
+- [x] Compile `runtime/file.c` as a Windows translation unit in CI after migrating primary file-handle I/O to `host_fs`.
 - [x] Route Xbox file open/create, sequential and positioned read/write, flush, close, seek/query-position, truncate/end-of-file, and deletion-on-close handle operations through `host_fs`.
 - [x] Preserve positioned-read EOF behavior across POSIX and Windows; both backend tests assert that a read beyond EOF returns zero bytes.
 - [x] Add a Windows CI compile-only check for `runtime/file.c`; workflow run 45520963051 passed alongside ARM64 native/POSIX tests and Android NDK header checks.
