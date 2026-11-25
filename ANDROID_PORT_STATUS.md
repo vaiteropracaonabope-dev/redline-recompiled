@@ -80,4 +80,7 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Add `tests/host_fs_win32.c` to exercise create/read/write/positioned I/O/truncate/stat/directory enumeration and cleanup.
 - [x] Compile and run the Windows backend runtime test in GitHub Actions; the latest workflow run 45520455565 passed. The workflow now compiles the two source files to distinct object names before linking.
 - [x] Integrate shared host filesystem directory enumeration and directory creation into mod discovery in the Xbox HLE.
-- [ ] Integrate the remaining HLE operations (file open/read/write/seek/flush, metadata/time handling, deletion, and per-file directory enumeration). `runtime/file.c` still contains Win32 dependencies for these operations.
+- [x] Route Xbox file open/create, sequential and positioned read/write, flush, close, seek/query-position, truncate/end-of-file, and deletion-on-close handle operations through `host_fs`.
+- [x] Preserve positioned-read EOF behavior across POSIX and Windows; both backend tests assert that a read beyond EOF returns zero bytes.
+- [x] Add a Windows CI compile-only check for `runtime/file.c`; workflow run 45520963051 passed alongside ARM64 native/POSIX tests and Android NDK header checks.
+- [ ] Remove remaining Win32 dependencies from the HLE: file metadata/timestamps, directory enumeration state, recursive directory deletion, host directory creation for HDD partitions, and `windows.h` types are still Windows-specific. The full `runtime/file.c` is not yet Android-compilable.
