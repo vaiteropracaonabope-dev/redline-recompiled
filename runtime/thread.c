@@ -122,7 +122,7 @@ void gil_release(void) {
             for (count = 0; count < 64 && g_gil_stat[count].tid; count++) {}
             qsort(g_gil_stat, count, sizeof g_gil_stat[0], by_held);
             for (int k = 0; k < count && k < 8; k++)
-                fprintf(stderr, " %s%lu/%08X %.0fms (hold worst %.1f at %08X; wait %.1f avg %.1f worst)",
+                fprintf(stderr, " %s%" PRIu64 "/%08X %.0fms (hold worst %.1f at %08X; wait %.1f avg %.1f worst)",
                         g_gil_stat[k].tid == g_dpc_tid ? "DPC " : "", g_gil_stat[k].tid, g_gil_stat[k].fn,
                         g_gil_stat[k].held, g_gil_stat[k].worst_hold, g_gil_stat[k].worst_fn,
                         g_gil_stat[k].n ? g_gil_stat[k].waited / g_gil_stat[k].n : 0, g_gil_stat[k].worst_wait);
