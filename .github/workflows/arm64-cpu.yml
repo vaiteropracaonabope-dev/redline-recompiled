@@ -26,6 +26,7 @@ jobs:
           "$CC" -std=c11 -Wall -Wextra -Werror -Iruntime -fsyntax-only tests/arm64_cpu_compile.c
           "$CC" -std=c11 -Wall -Wextra -Werror -Iruntime -fsyntax-only runtime/host_fs_posix.c tests/host_fs_posix.c
           "$CC" -std=c11 -Wall -Wextra -Werror -Iruntime -fsyntax-only runtime/file.c
+          "$CC" -std=c11 -Wall -Wextra -Wno-unused-parameter -Werror -Iruntime -fsyntax-only runtime/thread.c
           "$CC" -std=c11 -Wall -Wextra -Werror -Iruntime -fsyntax-only runtime/host_sync_posix.c tests/host_sync_posix.c
           "$CC" -std=c11 -Wall -Wextra -Werror -pthread -Iruntime -fsyntax-only runtime/host_thread_posix.c tests/host_thread_posix.c
 
