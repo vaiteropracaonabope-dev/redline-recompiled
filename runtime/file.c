@@ -899,6 +899,7 @@ static uint32_t k_NtFsControlFile(X86Ctx *c, const uint32_t *a) {
 /* ---------------- symbolic links ---------------- */
 
 static uint32_t k_IoCreateSymbolicLink(X86Ctx *c, const uint32_t *a) {
+    (void)c;
     /* (SymbolicLinkName, DeviceName) */
     char link[64], target[GPATH];
     ansi_read(a[0], link, sizeof link);
@@ -916,6 +917,7 @@ static uint32_t k_IoCreateSymbolicLink(X86Ctx *c, const uint32_t *a) {
     return STATUS_SUCCESS;
 }
 static uint32_t k_IoDeleteSymbolicLink(X86Ctx *c, const uint32_t *a) {
+    (void)c;
     char link[64];
     ansi_read(a[0], link, sizeof link);
     for (int i = 0; i < MAX_LINKS; i++)
@@ -923,6 +925,7 @@ static uint32_t k_IoDeleteSymbolicLink(X86Ctx *c, const uint32_t *a) {
     return STATUS_SUCCESS;
 }
 static uint32_t k_NtOpenSymbolicLinkObject(X86Ctx *c, const uint32_t *a) {
+    (void)c;
     /* (*LinkHandle, ObjectAttributes): handle = 1-based link index tagged with 0x4C000000 */
     char name[GPATH];
     guest_path(a[1], name);
@@ -934,6 +937,7 @@ static uint32_t k_NtOpenSymbolicLinkObject(X86Ctx *c, const uint32_t *a) {
     return STATUS_OBJECT_NAME_NOT_FOUND;
 }
 static uint32_t k_NtQuerySymbolicLinkObject(X86Ctx *c, const uint32_t *a) {
+    (void)c;
     /* (LinkHandle, LinkTarget (ANSI_STRING*), *ReturnedLength) */
     uint32_t i = (a[0] & 0xFFFF) - 1;
     if ((a[0] & 0xFF000000u) != 0x4C000000u || i >= MAX_LINKS) return STATUS_INVALID_HANDLE;
