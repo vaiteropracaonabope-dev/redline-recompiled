@@ -59,7 +59,7 @@ typedef struct {
 } GilStat;
 static GilStat g_gil_stat[64];
 static uint64_t g_gil_window;
-DWORD g_dpc_tid; /* the vblank/DPC thread, named in the GILLOG report */
+uint64_t g_dpc_tid; /* the vblank/DPC thread, named in the GILLOG report */
 
 static int by_held(const void *a, const void *b) {
     double d = ((const GilStat *)b)->held - ((const GilStat *)a)->held;
@@ -746,32 +746,28 @@ static void raise_interrupt(uint32_t vector);
 
 /* the GPU raised an interrupt (nv2a.c): the DPC thread runs the driver's handler now, not at its next millisecond.
  * D3D makes room in the push buffer by a software method the handler answers; the GPU waits on it meanwhile. */
-static HANDLE g_dpc_kick;
+static volatile int32_t g_dpc_kick;
 void dpc_kick(void) {
-    if (g_dpc_kick) SetEvent(g_dpc_kick);
+    redline_sync_store(&g_dpc_kick, 1);
+    redline_sync_wake_all(&g_dpc_kick);
 }
 
 static void dpc_proc(void *p) {
     thread_name("vblank / DPC");
     t_ctx = &g_dpc_ctx;
-    g_dpc_tid = GetCurrentThreadId();
+    g_dpc_tid = redline_sync_thread_id();
     track(&g_dpc_ctx);
-    /* a high-resolution timer to the next millisecond, or to the vblank when that comes sooner: Sleep(1) woke
-     * anywhere up to 2 ms late, and the vblank paces the game's frames */
-    HANDLE timer = CreateWaitableTimerExW(NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
-    g_dpc_kick = CreateEventA(NULL, FALSE, FALSE, NULL);
+    /* Wait on a host atomic word rather than a Win32 event/timer. POSIX can retain sub-ms
+     * deadlines; the Windows backend rounds to the nearest millisecond. */
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
     static double next_vblank;
     for (;;) {
         double ms = (double)redline_sync_monotonic_ns() / 1000000.0;
         int vblank = next_vblank && next_vblank - ms < 1; /* this wake is the vblank's: it jumps ahead */
         double wait = vblank ? next_vblank - ms : 1;
-        if (timer && wait > 0) {
-            LARGE_INTEGER due = {.QuadPart = -(LONGLONG)(wait * 10000)};
-            SetWaitableTimer(timer, &due, 0, NULL, NULL, FALSE);
-            HANDLE h[2] = {timer, g_dpc_kick};
-            WaitForMultipleObjects(g_dpc_kick ? 2 : 1, h, FALSE, INFINITE);
-        } else if (!timer) redline_sync_sleep_ms(1);
+        if (wait > 0 && redline_sync_load(&g_dpc_kick) == 0)
+            redline_sync_wait_i32_ns(&g_dpc_kick, 0, (int64_t)(wait * 1000000.0));
+        redline_sync_exchange(&g_dpc_kick, 0);
         if (vblank) gil_acquire_urgent();
         else gil_acquire();
         nv2a_tick();
