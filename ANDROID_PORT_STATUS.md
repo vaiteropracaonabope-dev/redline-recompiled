@@ -61,3 +61,12 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Add `tests/host_fs_posix.c` covering file creation, read/write, positioned I/O, truncate, sync, metadata, directory enumeration, and cleanup.
 - [ ] Confirm Android NDK cross-compilation and native ARM64 runtime test for the new backend (GitHub Actions run 45519537601).
 - [ ] Add the Windows backend for this interface, then migrate `runtime/file.c` incrementally so existing Windows behavior remains testable.
+
+## Dual-platform host filesystem backend groundwork
+
+- [x] Add `runtime/host_fs_win32.c`, the Windows implementation of the platform-neutral filesystem interface.
+- [x] Add a Windows CI job to compile the backend; initialize the MSVC environment before invoking `cl`.
+- [x] POSIX filesystem runtime tests passed on the native ARM64 runner in workflow run 45519799644.
+- [ ] Re-run Windows compilation after fixing the CI environment setup; the first attempt failed because `cl.exe` was not on PATH, before compiling the source.
+- [ ] Finish Android NDK header-check for the POSIX backend.
+- [ ] Migrate the Xbox filesystem HLE in `runtime/file.c` to the interface in small tested pieces. The HLE still calls Win32 APIs directly; neither backend is integrated there yet.
