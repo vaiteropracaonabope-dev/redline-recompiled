@@ -503,8 +503,8 @@ static uint32_t wait_objects(X86Ctx *c, uint32_t count, const uint32_t *objs, in
         if ((redline_sync_monotonic_ns() / 1000000ull) >= deadline) return STATUS_TIMEOUT;
         int32_t seen = count == 1 ? OBJ_SIGNAL(objs[0]) : 0; /* read with the lock held: a change ends the sleep */
         gil_release();
-        if (count == 1) WaitOnAddress(&OBJ_SIGNAL(objs[0]), &seen, sizeof seen, 1);
-        else Sleep(1);
+        if (count == 1) redline_sync_wait_i32(&OBJ_SIGNAL(objs[0]), seen, 1);
+        else redline_sync_sleep_ms(1);
         gil_acquire();
     }
 }
@@ -540,7 +540,7 @@ static uint32_t k_KeDelayExecutionThread(X86Ctx *c, const uint32_t *a) {
     if (a[1] && deliver_apcs(c)) return STATUS_USER_APC;
     int64_t t = (int64_t)M64(a[2]);
     gil_release();
-    Sleep(t < 0 ? (DWORD)(-t / 10000) : 0);
+    redline_sync_sleep_ms(t < 0 ? (uint32_t)(-t / 10000) : 0);
     gil_acquire();
     return STATUS_SUCCESS;
 }
@@ -646,7 +646,7 @@ static int cs_try(X86Ctx *c, uint32_t cs) {
 static uint32_t k_RtlEnterCriticalSection(X86Ctx *c, const uint32_t *a) {
     while (!cs_try(c, a[0])) {
         gil_release();
-        SwitchToThread();
+        redline_sync_yield();
         gil_acquire();
     }
     return 0;
@@ -743,7 +743,7 @@ static DWORD WINAPI dpc_proc(void *p) {
             SetWaitableTimer(timer, &due, 0, NULL, NULL, FALSE);
             HANDLE h[2] = {timer, g_dpc_kick};
             WaitForMultipleObjects(g_dpc_kick ? 2 : 1, h, FALSE, INFINITE);
-        } else if (!timer) Sleep(1);
+        } else if (!timer) redline_sync_sleep_ms(1);
         if (vblank) gil_acquire_urgent();
         else gil_acquire();
         nv2a_tick();
