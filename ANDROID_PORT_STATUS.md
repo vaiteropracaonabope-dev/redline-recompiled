@@ -64,6 +64,7 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Integrate the interface into `runtime/file.c` for mod-directory discovery, recursive mod-file enumeration, HDD partition directory creation, recursive directory cleanup, and file/directory deletion.
 - [x] Migrate per-handle Xbox directory enumeration to `redline_fs_dir_open/read/close`, with case-insensitive `*`/`?` matching and the Windows-compatible `*.*` all-files behavior.
 - [x] Route Xbox file metadata queries and timestamp updates through `host_fs`; POSIX exposes access/modified times and explicitly reports creation time as unavailable, while Windows preserves creation/access/modified timestamps.
+- [x] Populate creation, access, write, and change timestamps in `NtQueryDirectoryFile` from the host metadata (creation remains zero on POSIX when unavailable).
 
 ## Dual-platform host filesystem backend groundwork
 
@@ -85,4 +86,6 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Preserve positioned-read EOF behavior across POSIX and Windows; both backend tests assert that a read beyond EOF returns zero bytes.
 - [x] Add a Windows CI compile-only check for `runtime/file.c`; workflow run 45520963051 passed alongside ARM64 native/POSIX tests and Android NDK header checks.
 - [x] Remove the direct `windows.h` include and Windows-specific timing/string helpers from `runtime/file.c`; replace the remaining Windows file-time type with a local fixed-width representation.
-- [ ] Remove remaining Win32 dependencies from the HLE: `windows.h` types/includes, performance-counter timing, and other Windows-specific helpers remain. File metadata/timestamp queries and directory enumeration now use `host_fs`; the full `runtime/file.c` is not yet Android-compilable.
+- [x] Remove direct Win32 dependencies from `runtime/file.c`; the file HLE now uses `host_fs` and portable fixed-width/time/string helpers.
+- [x] Cross-compile `runtime/file.c` with Android NDK 27.2.12479018 using `-Wall -Wextra -Werror`; GitHub Actions run 45522839458 passed all three jobs (ARM64 NDK, native ARM64/POSIX, and Windows backend).
+- [ ] Port remaining runtime subsystems; `runtime/thread.c`, graphics, audio, startup, and the full build pipeline still need Android-specific work. The complete runtime is not yet Android-buildable.
