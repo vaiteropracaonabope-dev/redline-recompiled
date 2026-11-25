@@ -36,3 +36,23 @@ uint32_t redline_thread_resume(RedlineThreadToken token) {
     free(thread);
     return previous == (DWORD)-1 ? 0 : (uint32_t)previous;
 }
+
+void redline_thread_set_name(const char *name) {
+    typedef HRESULT (WINAPI *SetDescriptionFn)(HANDLE, PCWSTR);
+    static SetDescriptionFn set_description;
+    static int initialized;
+    if (!initialized) {
+        set_description = (SetDescriptionFn)(void *)GetProcAddress(
+            GetModuleHandleA("kernel32.dll"), "SetThreadDescription");
+        initialized = 1;
+    }
+    if (set_description && name) {
+        wchar_t wide_name[64];
+        if (MultiByteToWideChar(CP_UTF8, 0, name, -1, wide_name, 64))
+            (void)set_description(GetCurrentThread(), wide_name);
+    }
+}
+void redline_thread_set_priority(int priority) {
+    if (priority == REDLINE_THREAD_PRIORITY_TIME_CRITICAL)
+        (void)SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
+}
