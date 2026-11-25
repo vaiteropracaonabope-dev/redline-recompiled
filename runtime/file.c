@@ -75,17 +75,21 @@ static void ansi_read(uint32_t str, char *out, size_t cap) {
     out[len] = 0;
 }
 
-static HFile *file_of(uint32_t handle) {
-    if (handle < KERNEL_BASE || handle >= KERNEL_BASE + KERNEL_SIZE || M8(handle) != FILE_OBJ_TYPE) return NULL;
-    HFile *f = &g_files[M32(handle + 0x10)];
-    return f->obj == handle ? f : NULL;
+static HFile *file_of(uint32_t object) {
+    if (object < KERNEL_BASE || object >= KERNEL_BASE + KERNEL_SIZE || M8(object) != FILE_OBJ_TYPE) return NULL;
+    HFile *f = &g_files[M32(object + 0x10)];
+    return f->obj == object ? f : NULL;
+}
+
+static HFile *file_from_handle(X86Ctx *c, uint32_t handle) {
+    return file_of(thread_handle_object(c, handle));
 }
 
 /* OBJECT_ATTRIBUTES (Xbox): RootDirectory 0x00, ObjectName (ANSI_STRING*) 0x04, Attributes 0x08 */
-static void guest_path(uint32_t oa, char *out) {
+static void guest_path(X86Ctx *c, uint32_t oa, char *out) {
     char name[GPATH];
     ansi_read(M32(oa + 4), name, sizeof name);
-    HFile *root = file_of(M32(oa));
+    HFile *root = file_from_handle(c, M32(oa));
     if (root) snprintf(out, GPATH, "%s\\%s", root->guest, name);
     else snprintf(out, GPATH, "%s", name);
 }
@@ -316,9 +320,8 @@ static int flog(void) {
 
 static uint32_t open_file(X86Ctx *c, uint32_t out_handle, uint32_t access, uint32_t oa, uint32_t iosb_va,
                           uint32_t disposition, uint32_t options) {
-    (void)c;
     char guest[GPATH], host[MAX_PATH];
-    guest_path(oa, guest);
+    guest_path(c, oa, guest);
     achieve_file(guest, (access & 0x40000006u) != 0 || disposition != 1); /* GENERIC_WRITE, FILE_WRITE/APPEND_DATA */
     int dev = host_path(guest, host);
     if (!dev) {
@@ -441,7 +444,13 @@ static uint32_t open_file(X86Ctx *c, uint32_t out_handle, uint32_t access, uint3
         g_files[i].unbuffered = 1, g_files[i].has_eof = 1, g_files[i].eof = (int64_t)opened_info.size;
     snprintf(g_files[i].guest, GPATH, "%s", guest);
     snprintf(g_files[i].host, MAX_PATH, "%s", host);
-    M32(out_handle) = obj;
+    uint32_t guest_handle = thread_handle_create(obj, FILE_OBJ_TYPE);
+    if (!guest_handle) {
+        file_close(obj);
+        iosb(iosb_va, 0xC000009Au, 0); /* STATUS_INSUFFICIENT_RESOURCES */
+        return 0xC000009Au;
+    }
+    M32(out_handle) = guest_handle;
     iosb(iosb_va, STATUS_SUCCESS, info);
     if (flog()) fprintf(stderr, "[file] open %s -> %08X%s\n", guest, obj, is_dir ? " (dir)" : "");
     return STATUS_SUCCESS;
@@ -470,7 +479,13 @@ int file_close(uint32_t handle) {
 /* ---------------- read / write ---------------- */
 
 static void complete_io(X86Ctx *c, uint32_t event, uint32_t apc, uint32_t apc_ctx, uint32_t iosb_va) {
-    if (event) { M32(event + 4) = 1; thread_object_wake(event); }
+    if (event) {
+        uint32_t object = thread_handle_object(c, event);
+        if (object && (M8(object) == 0 || M8(object) == 1)) {
+            M32(object + 4) = 1;
+            thread_object_wake(object);
+        }
+    }
     if (apc) queue_user_apc(c, apc, apc_ctx, iosb_va, 0); /* runs at the thread's next alertable wait */
 }
 
@@ -501,7 +516,7 @@ static void empty_dir(const char *dir) {
 
 static uint32_t rw(X86Ctx *c, const uint32_t *a, int write) {
     /* (FileHandle, Event, ApcRoutine, ApcContext, IoStatusBlock, Buffer, Length, *ByteOffset) */
-    HFile *f = file_of(a[0]);
+    HFile *f = file_from_handle(c, a[0]);
     if (!f || f->h == (RedlineFsHandle)-1) return STATUS_INVALID_HANDLE; /* dirs only via a raw image */
     int64_t transferred;
     int io_error = 0;
@@ -558,8 +573,7 @@ static uint32_t rw(X86Ctx *c, const uint32_t *a, int write) {
 static uint32_t k_NtReadFile(X86Ctx *c, const uint32_t *a) { return rw(c, a, 0); }
 static uint32_t k_NtWriteFile(X86Ctx *c, const uint32_t *a) { return rw(c, a, 1); }
 static uint32_t k_NtFlushBuffersFile(X86Ctx *c, const uint32_t *a) {
-    (void)c;
-    HFile *f = file_of(a[0]);
+    HFile *f = file_from_handle(c, a[0]);
     if (f && f->h != (RedlineFsHandle)-1) redline_fs_sync(f->h);
     iosb(a[1], STATUS_SUCCESS, 0);
     return STATUS_SUCCESS;
@@ -592,9 +606,8 @@ static void network_open_info(uint32_t va, const RedlineFsInfo *info) {
 }
 
 static uint32_t k_NtQueryInformationFile(X86Ctx *c, const uint32_t *a) {
-    (void)c;
     /* (FileHandle, IoStatusBlock, FileInformation, Length, FileInformationClass) */
-    HFile *f = file_of(a[0]);
+    HFile *f = file_from_handle(c, a[0]);
     if (!f) return STATUS_INVALID_HANDLE;
     RedlineFsInfo info;
     if (redline_fs_stat(f->host, &info)) return status_from_errno(errno);
@@ -631,9 +644,8 @@ static uint32_t k_NtQueryInformationFile(X86Ctx *c, const uint32_t *a) {
 }
 
 static uint32_t k_NtSetInformationFile(X86Ctx *c, const uint32_t *a) {
-    (void)c;
     /* (FileHandle, IoStatusBlock, FileInformation, Length, FileInformationClass) */
-    HFile *f = file_of(a[0]);
+    HFile *f = file_from_handle(c, a[0]);
     if (!f) return STATUS_INVALID_HANDLE;
     int64_t v;
     switch (a[4]) {
@@ -685,7 +697,7 @@ static uint32_t k_NtQueryFullAttributesFile(X86Ctx *c, const uint32_t *a) {
     (void)c;
     /* (ObjectAttributes, FileNetworkOpenInformation*) */
     char guest[GPATH], host[MAX_PATH];
-    guest_path(a[0], guest);
+    guest_path(c, a[0], guest);
     RedlineFsInfo info;
     if (!host_path(guest, host) || redline_fs_stat(host, &info)) {
         if (flog()) fprintf(stderr, "[file] attributes %s -> not found\\n", guest);
@@ -718,10 +730,8 @@ static uint32_t cluster_sectors(const HFile *f) {
     return !memcmp(hdr, "FATX", 4) && hdr[2] ? hdr[2] : 32; /* FATX: Signature, VolumeId, SectorsPerCluster */
 }
 
-static uint32_t k_NtQueryVolumeInformationFile(X86Ctx *c, const uint32_t *a) {
-    (void)c;
+static uint32_t query_volume_information(HFile *f, const uint32_t *a) {
     /* (FileHandle, IoStatusBlock, FsInformation, Length, FsInformationClass) */
-    HFile *f = file_of(a[0]);
     if (!f) return STATUS_INVALID_HANDLE;
     uint32_t spc = cluster_sectors(f);
     uint64_t units = (partition_of(f) < 0 ? 0x1C0000000ull : partition_size(f)) / (spc * 512ull);
@@ -754,12 +764,16 @@ static uint32_t k_NtQueryVolumeInformationFile(X86Ctx *c, const uint32_t *a) {
     return STATUS_SUCCESS;
 }
 
+static uint32_t k_NtQueryVolumeInformationFile(X86Ctx *c, const uint32_t *a) {
+    return query_volume_information(file_from_handle(c, a[0]), a);
+}
+
 static uint32_t k_IoQueryVolumeInformation(X86Ctx *c, const uint32_t *a) {
-    /* (FileObject, FsInformationClass, Length, FsInformation, *ReturnedLength): file objects are our handles */
+    /* (FileObject, FsInformationClass, Length, FsInformation, *ReturnedLength): this API receives an object pointer. */
     static uint32_t iosb_va;
     if (!iosb_va) iosb_va = kernel_alloc(8);
     uint32_t args[5] = {a[0], iosb_va, a[3], a[2], a[1]};
-    uint32_t st = k_NtQueryVolumeInformationFile(c, args);
+    uint32_t st = query_volume_information(file_of(a[0]), args);
     if (a[4]) M32(a[4]) = M32(iosb_va + 4);
     return st;
 }
@@ -787,7 +801,7 @@ static int directory_mask_match(const char *mask, const char *name) {
 
 static uint32_t k_NtQueryDirectoryFile(X86Ctx *c, const uint32_t *a) {
     /* One FILE_DIRECTORY_INFORMATION entry per call; directory scanning is host-neutral. */
-    HFile *f = file_of(a[0]);
+    HFile *f = file_from_handle(c, a[0]);
     if (!f || !f->is_dir) return STATUS_INVALID_HANDLE;
 
     int restart = (uint8_t)a[9];
@@ -848,9 +862,8 @@ static uint32_t k_NtQueryDirectoryFile(X86Ctx *c, const uint32_t *a) {
 }
 
 static uint32_t k_NtDeleteFile(X86Ctx *c, const uint32_t *a) {
-    (void)c;
     char guest[GPATH], host[MAX_PATH];
-    guest_path(a[0], guest);
+    guest_path(c, a[0], guest);
     if (!host_path(guest, host)) return STATUS_OBJECT_PATH_NOT_FOUND;
     RedlineFsInfo info;
     if (redline_fs_stat(host, &info)) return status_from_errno(errno);
@@ -871,7 +884,7 @@ static uint64_t partition_size(const HFile *f) {
 static uint32_t k_NtDeviceIoControlFile(X86Ctx *c, const uint32_t *a) {
     /* (FileHandle, Event, ApcRoutine, ApcContext, IoStatusBlock, IoControlCode, InputBuffer, InputBufferLength,
      *  OutputBuffer, OutputBufferLength) */
-    HFile *f = file_of(a[0]);
+    HFile *f = file_from_handle(c, a[0]);
     if (!f) return STATUS_INVALID_HANDLE;
     uint64_t size = partition_size(f);
     uint32_t out = a[8], len = 0;
@@ -895,6 +908,7 @@ static uint32_t k_NtDeviceIoControlFile(X86Ctx *c, const uint32_t *a) {
 
 static uint32_t k_NtFsControlFile(X86Ctx *c, const uint32_t *a) {
     /* same layout as NtDeviceIoControlFile; dismount/lock/unlock need no host work */
+    if (!file_from_handle(c, a[0])) return STATUS_INVALID_HANDLE;
     if (flog()) fprintf(stderr, "[file] FSCTL %08X\n", a[5]);
     iosb(a[4], STATUS_SUCCESS, 0);
     complete_io(c, a[1], a[2], a[3], a[4]);
@@ -933,7 +947,7 @@ static uint32_t k_NtOpenSymbolicLinkObject(X86Ctx *c, const uint32_t *a) {
     (void)c;
     /* (*LinkHandle, ObjectAttributes): handle = 1-based link index tagged with 0x4C000000 */
     char name[GPATH];
-    guest_path(a[1], name);
+    guest_path(c, a[1], name);
     for (int i = 0; i < MAX_LINKS; i++)
         if (g_links[i].link[0] && !ascii_case_compare(g_links[i].link, name)) {
             M32(a[0]) = 0x4C000000u | (i + 1);
