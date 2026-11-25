@@ -61,6 +61,15 @@ static void test_object_references(void) {
     assert(!redline_object_reference(&refs));
     refs = UINT32_MAX;
     assert(!redline_object_reference(&refs) && refs == UINT32_MAX);
+
+    /* A live guest thread owns an execution reference as well as its returned handle. */
+    refs = 2;
+    assert(!redline_object_dereference(&refs) && refs == 1); /* caller closes while it runs */
+    assert(redline_object_dereference(&refs) && refs == 0); /* thread exits */
+    /* A waiter pins an object after its public handle is closed. */
+    refs = 2;
+    assert(!redline_object_dereference(&refs) && refs == 1); /* close handle */
+    assert(redline_object_dereference(&refs) && refs == 0); /* waiter releases final pin */
 }
 int main(void) {
     test_semaphore();
