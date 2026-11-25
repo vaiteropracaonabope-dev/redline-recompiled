@@ -1,8 +1,6 @@
-/* Generation-tagged guest handle table primitives.
- *
- * This is deliberately not wired into the Xbox HLE yet: the Xbox ABI boundary must
- * be audited before changing values returned by Nt- and Ps-family exports. A handle owns one
- * object reference; callers perform object ref/deref around insert/duplicate/close.
+/* Generation-tagged 32-bit guest handle table primitives.
+ * A handle owns one object reference; callers perform object ref/deref around
+ * insert, duplicate, and close. All table operations require the guest GIL.
  */
 #pragma once
 #include <stdint.h>
@@ -41,7 +39,7 @@ static inline void redline_guest_handles_init(RedlineGuestHandleTable *table) {
 
 static inline int redline_guest_handle_insert(RedlineGuestHandleTable *table, uint32_t object,
                                                uint8_t type, uint32_t *handle) {
-    if (!table || !object || !type || !handle) return 0;
+    if (!table || !object || !handle) return 0;
     for (uint32_t i = 0; i < REDLINE_GUEST_HANDLE_CAPACITY; ++i) {
         RedlineGuestHandleEntry *entry = &table->entries[i];
         if (entry->live || entry->retired) continue;
