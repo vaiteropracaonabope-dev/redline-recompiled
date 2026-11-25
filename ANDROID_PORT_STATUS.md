@@ -61,8 +61,8 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Add `tests/host_fs_posix.c` covering file creation, read/write, positioned I/O, truncate, sync, metadata, directory enumeration, and cleanup.
 - [x] Confirm Android NDK cross-compilation and native ARM64 runtime test for the POSIX backend; workflow run 45520455565 passed.
 - [x] Add and test the Windows backend for this interface.
-- [x] Begin integrating the interface into `runtime/file.c`: mod-directory discovery and recursive mod-file enumeration now use `redline_fs_mkdir` and `redline_fs_dir_*`.
-- [ ] Migrate the remaining Xbox HLE file operations incrementally; open/read/write/metadata/delete and per-handle directory enumeration still contain direct Win32 calls.
+- [x] Integrate the interface into `runtime/file.c` for mod-directory discovery, recursive mod-file enumeration, HDD partition directory creation, recursive directory cleanup, and file/directory deletion.
+- [ ] Migrate the remaining Xbox HLE file operations incrementally; metadata/timestamps and per-handle directory enumeration still contain direct Win32 calls.
 
 ## Dual-platform host filesystem backend groundwork
 
@@ -80,7 +80,7 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Add `tests/host_fs_win32.c` to exercise create/read/write/positioned I/O/truncate/stat/directory enumeration and cleanup.
 - [x] Compile and run the Windows backend runtime test in GitHub Actions; latest workflow run 45520963051 passed. Backend and test sources use distinct object names before linking.
 - [x] Compile `runtime/file.c` as a Windows translation unit in CI after migrating primary file-handle I/O to `host_fs`.
-- [x] Route Xbox file open/create, sequential and positioned read/write, flush, close, seek/query-position, and truncate/end-of-file operations through `host_fs`; the close step in the delete-on-close path also uses the abstraction, while the actual delete call remains Win32.
+- [x] Route Xbox file open/create, sequential and positioned read/write, flush, close, seek/query-position, truncate/end-of-file, delete-on-close, `NtDeleteFile`, HDD partition directory creation, and recursive partition cleanup through `host_fs`.
 - [x] Preserve positioned-read EOF behavior across POSIX and Windows; both backend tests assert that a read beyond EOF returns zero bytes.
 - [x] Add a Windows CI compile-only check for `runtime/file.c`; workflow run 45520963051 passed alongside ARM64 native/POSIX tests and Android NDK header checks.
-- [ ] Remove remaining Win32 dependencies from the HLE: file metadata/timestamps, directory enumeration state, recursive directory deletion, host directory creation for HDD partitions, and `windows.h` types are still Windows-specific. The full `runtime/file.c` is not yet Android-compilable.
+- [ ] Remove remaining Win32 dependencies from the HLE: file metadata/timestamps, per-handle directory enumeration state (`FindFirstFileA` / `FindNextFileA`), timestamp updates, and Windows types/includes are still Windows-specific. The full `runtime/file.c` is not yet Android-compilable.
