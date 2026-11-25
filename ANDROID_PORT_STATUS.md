@@ -89,3 +89,14 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Remove direct Win32 dependencies from `runtime/file.c`; the file HLE now uses `host_fs` and portable fixed-width/time/string helpers.
 - [x] Cross-compile `runtime/file.c` with Android NDK 27.2.12479018 using `-Wall -Wextra -Werror`; GitHub Actions run 45522839458 passed all three jobs (ARM64 NDK, native ARM64/POSIX, and Windows backend).
 - [ ] Port remaining runtime subsystems; `runtime/thread.c`, graphics, audio, startup, and the full build pipeline still need Android-specific work. The complete runtime is not yet Android-buildable.
+
+
+## Thread and synchronization portability groundwork
+
+- [x] Confirm the directory timestamp migration and all three CI jobs in workflow run 45523074811.
+- [x] Add `runtime/host_sync.h`, a platform-neutral contract for atomic 32-bit operations, wait/wake, monotonic and realtime clocks, sleep/yield, and host thread IDs.
+- [x] Add a POSIX implementation in `runtime/host_sync_posix.c` using C atomics, pthread condition variables, and POSIX clocks; intended for Linux/Android.
+- [x] Add a Windows implementation in `runtime/host_sync_win32.c` using Interlocked, WaitOnAddress, and Windows clocks.
+- [x] Add POSIX and Windows smoke tests and wire them into the ARM64/Windows CI workflow.
+- [ ] Confirm the new host synchronization tests in workflow run 45523373515.
+- [ ] Migrate `runtime/thread.c` incrementally to this interface. The file still uses Win32 thread creation, waitable timers, events, thread naming/priority, and other Windows APIs; it is not yet Android-buildable.
