@@ -65,13 +65,7 @@ static void abandon_thread_mutants(uint32_t thread) {
 /* Remove destroyed mutants from the bounded owner-exit registry so closed objects do not
  * permanently consume one of its slots. All callers hold the guest GIL. */
 static void untrack_mutant(uint32_t object) {
-    for (uint32_t i = 0; i < g_mutant_count; ++i) {
-        if (g_mutants[i] == object) {
-            g_mutants[i] = g_mutants[--g_mutant_count];
-            g_mutants[g_mutant_count] = 0;
-            return;
-        }
-    }
+    redline_object_registry_remove(g_mutants, &g_mutant_count, MAX_TRACKED_MUTANTS, object);
 }
 
 
