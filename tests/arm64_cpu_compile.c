@@ -84,10 +84,10 @@ int main(void) {
             !redline_xbox_path_is_partition_root("\\Device\\Harddisk0\\Partition12\\")) return 12;
         if (!redline_xbox_path_classify("\\Device\\Harddisk0\\Partition3\\cache\\file.dat", &path) ||
             path.device != REDLINE_XBOX_PATH_PARTITION || path.partition != 3 ||
-            strcmp(path.suffix, "\\\\cache\\\\file.dat") != 0) return 13;
-        if (redline_xbox_path_classify("\\\\Device\\\\CdRom01\\\\media", &path) ||
-            redline_xbox_path_classify("\\\\Device\\\\Harddisk0\\\\PartitionX", &path) ||
-            redline_xbox_path_is_partition_root("\\\\Device\\\\Harddisk0\\\\Partition3\\\\folder")) return 14;
+            strcmp(path.suffix, "\\cache\\file.dat") != 0) return 13;
+        if (redline_xbox_path_classify("\\Device\\CdRom01\\media", &path) ||
+            redline_xbox_path_classify("\\Device\\Harddisk0\\PartitionX", &path) ||
+            redline_xbox_path_is_partition_root("\\Device\\Harddisk0\\Partition3\\folder")) return 14;
     }
 
     return 0;
