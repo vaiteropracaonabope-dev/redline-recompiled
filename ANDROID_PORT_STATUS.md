@@ -157,3 +157,11 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [ ] KTHREAD objects remain retained as stable wait targets; full thread-object lifetime/reference accounting and actual guest ABI validation for duplicate/close calls remain open.
 - [ ] Guest kernel object memory is bump-allocated, so logical invalidation does not reclaim guest memory. A free-list/allocator and object-type-specific cleanup are still future work.
 - [x] Android NDK compile, native ARM64 tests, and Windows MSVC checks passed in workflow run 45526682805 (all three jobs successful).
+
+
+## Kernel object registry lifecycle
+
+- [x] Remove a finally released mutant from the bounded abandonment registry, clearing the vacated slot so repeated create/close cycles do not exhaust the 4096-entry registry.
+- [x] Use a shared tested registry-removal helper with swap-delete semantics; tests cover middle/first/last removal, missing objects, null inputs, and invalid counts.
+- [x] Android NDK, native ARM64, and Windows CI passed in workflow run 45527094973 (all three jobs successful).
+- [ ] Kernel guest memory itself remains bump-allocated and is not reused. Reusing raw guest object addresses without generation-tagged handles could make stale handles alias new objects, so physical reclamation is deferred until the handle ABI can safely distinguish generations.
