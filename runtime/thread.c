@@ -29,8 +29,15 @@ enum { OBJ_EVENT_NOTIFY = 0, OBJ_EVENT_SYNC = 1, OBJ_MUTANT = 2, OBJ_SEMAPHORE =
 #define MUTANT_OWNER(o) M32((o) + 0x18)
 #define SEMAPHORE_LIMIT(o) (*(int32_t *)(g_mem + (uint32_t)(o) + 0x10))
 
-/* after a change to an object's signal state: the threads waiting on it alone sleep on that word (wait_objects) */
-static void wake(uint32_t o) { redline_sync_wake_all(&OBJ_SIGNAL(o)); }
+/* Waiters recheck guest dispatcher objects after every notification. A sequence word lets one
+ * notification wake waits on any member of a multi-object wait without polling. */
+static volatile int32_t g_object_wake_seq;
+void thread_object_wake(uint32_t o) {
+    (void)o;
+    redline_sync_fetch_add(&g_object_wake_seq, 1);
+    redline_sync_wake_all(&g_object_wake_seq);
+}
+static void wake(uint32_t o) { thread_object_wake(o); }
 
 static THREAD_LOCAL jmp_buf *t_exit;
 THREAD_LOCAL X86Ctx *t_ctx; /* this host thread's guest context, for crash reports */
@@ -494,10 +501,9 @@ static int deliver_apcs(X86Ctx *c) {
 }
 
 /* Timeout: guest pointer to LARGE_INTEGER in 100ns units (negative = relative), 0 = infinite.
- * A wait on one object sleeps on its signal state, which every setter wakes (wake): polling each millisecond, a
- * race at 144 had the game thread waiting on the GPU's events (D3D making room in the push buffer) a millisecond
- * at a time. The millisecond stays as a fallback for a setter that does not wake (file.c's I/O events).
- * shortcut: a wait on several objects still polls each millisecond; give it a wait list if one shows up hot. */
+ * Waiters sleep on a shared notification sequence and recheck guest dispatcher state under the GIL. This
+ * supports wait-any and wait-all without polling; every object signal path, including file I/O completion,
+ * advances the sequence after changing its guest signal state. */
 static uint32_t wait_objects(X86Ctx *c, uint32_t count, const uint32_t *objs, int wait_all, uint32_t timeout_ptr,
                              int alertable) {
     if (alertable && deliver_apcs(c)) return STATUS_USER_APC;
@@ -526,10 +532,14 @@ static uint32_t wait_objects(X86Ctx *c, uint32_t count, const uint32_t *objs, in
                 if (try_acquire(objs[i], thread)) return STATUS_SUCCESS + i;
         }
         if ((redline_sync_monotonic_ns() / 1000000ull) >= deadline) return STATUS_TIMEOUT;
-        int32_t seen = count == 1 ? OBJ_SIGNAL(objs[0]) : 0; /* read with the lock held: a change ends the sleep */
+        /* Capture the sequence while holding the GIL. If a setter runs after gil_release(), its increment
+         * makes the wait return immediately, so no signal can be lost between checking and sleeping. */
+        int32_t seen = redline_sync_load(&g_object_wake_seq);
+        uint64_t now_ms = redline_sync_monotonic_ns() / 1000000ull;
+        int64_t remaining_ns = deadline == ~0ull ? -1 :
+                               deadline > now_ms ? (int64_t)((deadline - now_ms) * 1000000ull) : 0;
         gil_release();
-        if (count == 1) redline_sync_wait_i32(&OBJ_SIGNAL(objs[0]), seen, 1);
-        else redline_sync_sleep_ms(1);
+        redline_sync_wait_i32_ns(&g_object_wake_seq, seen, remaining_ns);
         gil_acquire();
     }
 }
