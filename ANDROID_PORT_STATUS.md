@@ -26,7 +26,7 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Cross-compile the ARM64 CPU compatibility test with Android NDK 27.2.12479018; GitHub Actions run 45518316795 completed successfully.
 - [x] Run native ARM64 runtime assertions for packed-float arithmetic, MINPS/MAXPS edge semantics, and selected MMX operations; GitHub Actions run 45518666662 passed this native ARM64 job.
 - [x] Run expanded MMX differential coverage on native ARM64; GitHub Actions run 45518921741 passed the native ARM64 runtime job. It compares every MMX opcode against a separate scalar oracle over 8×8 edge combinations and deterministic pseudo-random inputs.
-- [ ] Finish the Android NDK cross-compile job for this expanded test; the native ARM64 execution passed, while the NDK setup/compile job is still running.
+- [x] Finish the Android NDK cross-compile for the expanded CPU and POSIX filesystem checks; workflow run 45520455565 completed successfully.
 - [ ] Design the remaining platform abstraction boundaries before replacing platform APIs.
 - [ ] Add an Android NDK/Gradle skeleton only after the native entry points and graphics strategy are known.
 - [ ] Port and test one subsystem at a time: startup/filesystem, input, audio, graphics, then game runtime.
@@ -51,7 +51,7 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Extract Xbox device-path classification into the platform-neutral header `runtime/host_path.h`; it parses disc and hard-disk partition paths without Win32 APIs.
 - [x] Integrate that parser into the existing Windows filesystem mapper in `runtime/file.c`, preserving the host-specific file I/O implementation for now.
 - [x] Run native ARM64 tests for disc paths, partition roots, partition subpaths, and invalid device names; GitHub Actions run 45519263315 passed the runtime test after correcting test-string escaping.
-- [ ] Finish the Android NDK cross-compile job for the new path tests; native ARM64 runtime passed, NDK job is still running.
+- [x] Finish Android NDK cross-compilation for the path/CPU smoke test; workflow run 45520455565 completed successfully.
 - [ ] Define a host filesystem operations interface (open/read/write/stat/enumerate/create/remove) and implement Android/POSIX behavior before porting the full HLE file layer. The current `runtime/file.c` still directly depends on Win32 handles, FindFirstFile, CreateFile, ReadFile, and related APIs.
 
 ## Portable host filesystem interface
@@ -59,8 +59,10 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Add `runtime/host_fs.h`: platform-neutral operations for open/close, sequential and positioned I/O, seek, truncate, sync, metadata, directory creation/removal, and directory enumeration.
 - [x] Add `runtime/host_fs_posix.c`: POSIX backend intended for Linux and Android; it uses ordinary host paths and does not yet replace the Win32 calls in `runtime/file.c`.
 - [x] Add `tests/host_fs_posix.c` covering file creation, read/write, positioned I/O, truncate, sync, metadata, directory enumeration, and cleanup.
-- [ ] Confirm Android NDK cross-compilation and native ARM64 runtime test for the new backend (GitHub Actions run 45519537601).
-- [ ] Add the Windows backend for this interface, then migrate `runtime/file.c` incrementally so existing Windows behavior remains testable.
+- [x] Confirm Android NDK cross-compilation and native ARM64 runtime test for the POSIX backend; workflow run 45520455565 passed.
+- [x] Add and test the Windows backend for this interface.
+- [x] Begin integrating the interface into `runtime/file.c`: mod-directory discovery and recursive mod-file enumeration now use `redline_fs_mkdir` and `redline_fs_dir_*`.
+- [ ] Migrate the remaining Xbox HLE file operations incrementally; open/read/write/metadata/delete and per-handle directory enumeration still contain direct Win32 calls.
 
 ## Dual-platform host filesystem backend groundwork
 
@@ -76,5 +78,6 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Fix the first MSVC compile warning by replacing deprecated `strcpy` with a bounded copy.
 - [x] Make Windows truncate preserve the current file offset, matching the POSIX backend contract.
 - [x] Add `tests/host_fs_win32.c` to exercise create/read/write/positioned I/O/truncate/stat/directory enumeration and cleanup.
-- [x] Compile and run the Windows backend runtime test in GitHub Actions; the compile-and-test step passed in run 45520068842.
-- [ ] Integrate the shared host filesystem API into the Xbox HLE. This is still a separate pending task; `runtime/file.c` continues to use Win32 directly.
+- [x] Compile and run the Windows backend runtime test in GitHub Actions; the latest workflow run 45520455565 passed. The workflow now compiles the two source files to distinct object names before linking.
+- [x] Integrate shared host filesystem directory enumeration and directory creation into mod discovery in the Xbox HLE.
+- [ ] Integrate the remaining HLE operations (file open/read/write/seek/flush, metadata/time handling, deletion, and per-file directory enumeration). `runtime/file.c` still contains Win32 dependencies for these operations.
