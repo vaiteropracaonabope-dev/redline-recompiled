@@ -45,3 +45,10 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - `runtime/audio.c`: WASAPI / Windows COM audio output.
 - `runtime/file.c`: Win32 file APIs, Windows path conventions, and host filesystem mapping.
 - `README.md`: describes the current project as a Windows 10/11 x64 PC port requiring DirectX 11.1.
+
+## Filesystem portability groundwork
+
+- [x] Extract Xbox device-path classification into the platform-neutral header `runtime/host_path.h`; it parses disc and hard-disk partition paths without Win32 APIs.
+- [x] Integrate that parser into the existing Windows filesystem mapper in `runtime/file.c`, preserving the host-specific file I/O implementation for now.
+- [ ] Run ARM64 tests for disc paths, partition roots, partition subpaths, case-insensitive matching, and invalid device names.
+- [ ] Define a host filesystem operations interface (open/read/write/stat/enumerate/create/remove) and implement Android/POSIX behavior before porting the full HLE file layer. The current `runtime/file.c` still directly depends on Win32 handles, FindFirstFile, CreateFile, ReadFile, and related APIs.
