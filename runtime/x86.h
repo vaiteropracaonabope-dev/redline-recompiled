@@ -98,7 +98,7 @@ RT_API void mmio_write(uint32_t addr, uint32_t value, int bits);
 
 /* Emitted on backward branches: if another thread wants the guest lock, hand it over (thread.c). Keeps tight
  * guest spin loops from starving the thread they are waiting for. */
-extern RT_API volatile long g_gil_waiters;
+extern RT_API volatile int32_t g_gil_waiters;
 RT_API void gil_yield(void);
 #define SAFEPOINT()                     \
     do {                                \
