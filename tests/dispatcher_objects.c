@@ -19,22 +19,39 @@ static void test_semaphore(void) {
 static void test_mutant_recursion(void) {
     int32_t signal = 1, previous = 0;
     uint32_t owner = 0;
-    assert(redline_mutant_acquire(&signal, &owner, 11));
+    uint8_t abandoned = 0;
+    assert(redline_mutant_acquire(&signal, &owner, &abandoned, 11) == 1);
     assert(signal == 0 && owner == 11);
-    assert(!redline_mutant_acquire(&signal, &owner, 12));
-    assert(redline_mutant_acquire(&signal, &owner, 11));
+    assert(redline_mutant_acquire(&signal, &owner, &abandoned, 12) == 0);
+    assert(redline_mutant_acquire(&signal, &owner, &abandoned, 11) == 1);
     assert(signal == -1 && owner == 11);
     assert(redline_mutant_release(&signal, &owner, 11, &previous));
     assert(previous == -1 && signal == 0 && owner == 11);
     assert(!redline_mutant_release(&signal, &owner, 12, &previous));
     assert(redline_mutant_release(&signal, &owner, 11, &previous));
     assert(previous == 0 && signal == 1 && owner == 0);
-    assert(redline_mutant_acquire(&signal, &owner, 12));
+    assert(redline_mutant_acquire(&signal, &owner, &abandoned, 12) == 1);
     assert(signal == 0 && owner == 12);
+}
+
+static void test_mutant_abandonment(void) {
+    int32_t signal = 1;
+    uint32_t owner = 0;
+    uint8_t abandoned = 0;
+    assert(redline_mutant_acquire(&signal, &owner, &abandoned, 21) == 1);
+    assert(redline_mutant_acquire(&signal, &owner, &abandoned, 21) == 1);
+    assert(redline_mutant_abandon(&signal, &owner, &abandoned, 21));
+    assert(signal == 1 && owner == 0 && abandoned == 1);
+    assert(redline_mutant_acquire(&signal, &owner, &abandoned, 22) == 2);
+    assert(signal == 0 && owner == 22 && abandoned == 0);
+    assert(!redline_mutant_abandon(&signal, &owner, &abandoned, 21));
+    assert(redline_mutant_release(&signal, &owner, 22, NULL));
+    assert(signal == 1 && owner == 0);
 }
 int main(void) {
     test_semaphore();
     test_mutant_recursion();
+    test_mutant_abandonment();
     puts("dispatcher object tests passed");
     return 0;
 }
