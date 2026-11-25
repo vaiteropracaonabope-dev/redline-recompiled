@@ -577,7 +577,8 @@ static uint32_t k_KeWaitForSingleObject(X86Ctx *c, const uint32_t *a) {
 static uint32_t k_KeWaitForMultipleObjects(X86Ctx *c, const uint32_t *a) {
     /* (Count, Object[], WaitType (0 all, 1 any), WaitReason, WaitMode, Alertable, *Timeout, WaitBlockArray) */
     uint32_t objs[64];
-    uint32_t n = a[0] < 64 ? a[0] : 64;
+    if (!a[0] || a[0] > 64) return 0xC000000Du; /* STATUS_INVALID_PARAMETER */
+    uint32_t n = a[0];
     for (uint32_t i = 0; i < n; i++) objs[i] = M32(a[1] + 4 * i);
     return wait_objects(c, n, objs, a[2] == 0, a[6], a[5]);
 }
@@ -592,7 +593,8 @@ static uint32_t k_NtWaitForSingleObjectEx(X86Ctx *c, const uint32_t *a) {
 static uint32_t k_NtWaitForMultipleObjectsEx(X86Ctx *c, const uint32_t *a) {
     /* (Count, Handles[], WaitType, WaitMode, Alertable, *Timeout) */
     uint32_t objs[64];
-    uint32_t n = a[0] < 64 ? a[0] : 64;
+    if (!a[0] || a[0] > 64) return 0xC000000Du; /* STATUS_INVALID_PARAMETER */
+    uint32_t n = a[0];
     for (uint32_t i = 0; i < n; i++) objs[i] = handle_obj(c, M32(a[1] + 4 * i));
     return wait_objects(c, n, objs, a[2] == 0, a[5], a[4]);
 }
