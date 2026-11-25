@@ -123,3 +123,14 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Notify dispatcher waiters when synchronous file I/O completion signals an event in `file.c`.
 - [x] Android NDK syntax checks for `thread.c` and `file.c`, Windows MSVC translation-unit checks, and native ARM64 runtime tests passed in workflow run 45525519820.
 - [ ] Runtime stress tests for wait-any/wait-all, synchronization events, APCs, and timeout races remain necessary; CI syntax checks do not prove full guest-kernel semantics.
+
+
+## Dispatcher semaphore and mutant correctness
+
+- [x] Extract pure semaphore/mutant state transitions into `runtime/dispatcher_objects.h` so the guest HLE and tests share exactly the same rules.
+- [x] Validate semaphore creation bounds (`0 <= InitialCount <= MaximumCount`, positive maximum) and release counts/limits without signed overflow.
+- [x] Make mutant recursion explicit: recursive acquisitions decrement the signal count, releases restore it, and ownership clears only after the outermost release. Non-owner release is rejected.
+- [x] Make wait-all account for duplicate handles: repeated semaphore handles require multiple tokens, while a synchronization event/timer cannot be consumed twice from one signal.
+- [x] Reject zero or over-limit multi-object wait counts rather than silently truncating them.
+- [ ] Abandoned-mutant handling when a guest thread exits, full object-handle validation/closing, and runtime stress tests remain open.
+- [ ] New dispatcher semantics tests are wired into Android NDK, native ARM64, and Windows CI; await the workflow result before treating them as validated.
