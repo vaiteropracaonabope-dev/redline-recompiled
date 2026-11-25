@@ -829,7 +829,11 @@ static uint32_t k_NtQueryDirectoryFile(X86Ctx *c, const uint32_t *a) {
     uint32_t out = a[5], name_len = (uint32_t)strlen(entry.name);
     if (0x40 + name_len > a[6]) return STATUS_INVALID_PARAMETER;
     memset(g_mem + out, 0, 0x40);
+    RedlineFileTime created = filetime_from_unix_seconds(info.created_seconds);
+    RedlineFileTime accessed = filetime_from_unix_seconds(info.accessed_seconds);
     RedlineFileTime modified = filetime_from_unix_seconds(info.modified_seconds);
+    put_time(out + 0x08, created);
+    put_time(out + 0x10, accessed);
     put_time(out + 0x18, modified);
     put_time(out + 0x20, modified);
     M64(out + 0x28) = info.size;
