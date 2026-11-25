@@ -70,3 +70,11 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Configure MSVC in CI; the backend reached compilation, which exposed an MSVC secure-CRT warning for `strcpy`. Replace it with a bounded copy and rerun the Windows check.
 - [ ] Finish Android NDK header-check for the POSIX backend.
 - [ ] Migrate the Xbox filesystem HLE in `runtime/file.c` to the interface in small tested pieces. The HLE still calls Win32 APIs directly; neither backend is integrated there yet.
+
+## Windows filesystem backend validation
+
+- [x] Fix the first MSVC compile warning by replacing deprecated `strcpy` with a bounded copy.
+- [x] Make Windows truncate preserve the current file offset, matching the POSIX backend contract.
+- [x] Add `tests/host_fs_win32.c` to exercise create/read/write/positioned I/O/truncate/stat/directory enumeration and cleanup.
+- [ ] Run the Windows backend runtime test in GitHub Actions; workflow run is triggered by the latest branch update.
+- [ ] Integrate the shared host filesystem API into the Xbox HLE. This is still a separate pending task; `runtime/file.c` continues to use Win32 directly.
