@@ -427,6 +427,7 @@ static uint32_t open_file(X86Ctx *c, uint32_t out_handle, uint32_t access, uint3
     M8(obj) = FILE_OBJ_TYPE;
     M32(obj + 4) = 1; /* signaled: all I/O completes synchronously */
     M32(obj + 0x10) = i;
+    M32(obj + 0x14) = 1; /* initial file handle reference */
     /* FILE_OBJECT.FsContext (+8), read by XGetFilePhysicalSortKey: GDFX keeps the start sector in dword 0,
      * FATX has flags in dword 0 (bit 0: directory) and the first cluster at +0x1C. Any stable value sorts. */
     uint32_t fs_ctx = kernel_alloc(0x20);
