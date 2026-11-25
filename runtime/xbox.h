@@ -82,6 +82,7 @@ void nv2a_dma_object(uint32_t id, uint32_t cls, uint32_t base, uint32_t limit);
 uint32_t nv2a_flip_count(void);
 uint32_t nv2a_vblank_count(void);
 int64_t nv2a_push_ticks(void); /* QPC time spent running the push buffer so far */
+void thread_object_wake(uint32_t object); /* thread.c: notify dispatcher waits after changing an object signal */
 void watchdog_start(void);
 void memwatch_poll(void); /* main.c: arms MEMWATCH=r<address> when build/watch.now appears */
 int cfg_widescreen(void);   /* main.c: anamorphic 16:9, on unless WIDESCREEN=0 (or recomp.ini widescreen=0) */
