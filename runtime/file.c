@@ -469,7 +469,7 @@ int file_close(uint32_t handle) {
 /* ---------------- read / write ---------------- */
 
 static void complete_io(X86Ctx *c, uint32_t event, uint32_t apc, uint32_t apc_ctx, uint32_t iosb_va) {
-    if (event) M32(event + 4) = 1;
+    if (event) { M32(event + 4) = 1; thread_object_wake(event); }
     if (apc) queue_user_apc(c, apc, apc_ctx, iosb_va, 0); /* runs at the thread's next alertable wait */
 }
 
