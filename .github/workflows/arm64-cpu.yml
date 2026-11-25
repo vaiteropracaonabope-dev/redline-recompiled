@@ -38,3 +38,11 @@ jobs:
         run: /tmp/arm64-cpu-test
       - name: Run POSIX filesystem test
         run: /tmp/host-fs-test
+
+  windows-backend-check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile Windows filesystem backend
+        shell: cmd
+        run: cl /nologo /W3 /WX /c /Iruntime runtime\host_fs_win32.c /Fo:host_fs_win32.obj
