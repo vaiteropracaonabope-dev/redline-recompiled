@@ -536,8 +536,10 @@ static uint32_t wait_objects(X86Ctx *c, uint32_t count, const uint32_t *objs, in
          * makes the wait return immediately, so no signal can be lost between checking and sleeping. */
         int32_t seen = redline_sync_load(&g_object_wake_seq);
         uint64_t now_ms = redline_sync_monotonic_ns() / 1000000ull;
+        uint64_t remaining_ms = deadline > now_ms ? deadline - now_ms : 0;
         int64_t remaining_ns = deadline == ~0ull ? -1 :
-                               deadline > now_ms ? (int64_t)((deadline - now_ms) * 1000000ull) : 0;
+                               remaining_ms > (uint64_t)INT64_MAX / 1000000ull
+                                   ? INT64_MAX : (int64_t)(remaining_ms * 1000000ull);
         gil_release();
         redline_sync_wait_i32_ns(&g_object_wake_seq, seen, remaining_ns);
         gil_acquire();
