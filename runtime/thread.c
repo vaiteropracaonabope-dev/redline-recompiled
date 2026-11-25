@@ -465,11 +465,6 @@ static int try_acquire(uint32_t o, uint32_t thread) {
     }
 }
 
-static int is_signaled(uint32_t o, uint32_t thread) {
-    if (OBJ_TYPE(o) == OBJ_MUTANT) return OBJ_SIGNAL(o) > 0 || MUTANT_OWNER(o) == thread;
-    return OBJ_SIGNAL(o) > 0;
-}
-
 /* Wait-all must account for duplicate handles: a semaphore needs one token per occurrence, while
  * synchronization events/timers can only be consumed once. Check every object before consuming any. */
 static int can_acquire_all(uint32_t count, const uint32_t *objs, uint32_t thread) {
@@ -531,6 +526,7 @@ static int deliver_apcs(X86Ctx *c) {
  * advances the sequence after changing its guest signal state. */
 static uint32_t wait_objects(X86Ctx *c, uint32_t count, const uint32_t *objs, int wait_all, uint32_t timeout_ptr,
                              int alertable) {
+    if (!count || count > 64) return 0xC000000Du; /* STATUS_INVALID_PARAMETER */
     if (alertable && deliver_apcs(c)) return STATUS_USER_APC;
     uint32_t thread = current_thread(c);
     uint64_t deadline = ~0ull;
