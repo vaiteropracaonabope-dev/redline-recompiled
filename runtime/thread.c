@@ -12,6 +12,7 @@
 #include <math.h>
 
 #include "xbox.h"
+#include "host_sync.h"
 
 #define STATUS_SUCCESS 0x00000000u
 #define NT_CURRENT_THREAD 0xFFFFFFFEu
@@ -25,7 +26,7 @@ enum { OBJ_EVENT_NOTIFY = 0, OBJ_EVENT_SYNC = 1, OBJ_MUTANT = 2, OBJ_SEMAPHORE =
 #define SEMAPHORE_LIMIT(o) (*(int32_t *)(g_mem + (uint32_t)(o) + 0x10))
 
 /* after a change to an object's signal state: the threads waiting on it alone sleep on that word (wait_objects) */
-static void wake(uint32_t o) { WakeByAddressAll(&OBJ_SIGNAL(o)); }
+static void wake(uint32_t o) { redline_sync_wake_all(&OBJ_SIGNAL(o)); }
 
 static THREAD_LOCAL jmp_buf *t_exit;
 THREAD_LOCAL X86Ctx *t_ctx; /* this host thread's guest context, for crash reports */
@@ -35,9 +36,9 @@ THREAD_LOCAL X86Ctx *t_ctx; /* this host thread's guest context, for crash repor
  * yields only after a 1 ms quantum: handing over at every back-edge made a polling thread and a busy one
  * trade the lock millions of times a second, each a host thread switch. */
 #pragma comment(lib, "synchronization.lib")
-static volatile long g_gil_next, g_gil_serving;
-volatile long g_gil_waiters;
-static LONGLONG g_gil_since, g_gil_quantum; /* QPC time the holder took the lock; 1 ms in QPC ticks */
+static volatile int32_t g_gil_next, g_gil_serving;
+volatile int32_t g_gil_waiters;
+static uint64_t g_gil_since, g_gil_quantum; /* monotonic nanoseconds; 1 ms quantum */
 
 /* GILLOG=1: every 2 s, how busy the lock was, who held it most (thread, guest function last entered, ms) and how
  * long threads waited for it; all kept by the holder, so no locking of its own */
@@ -74,25 +75,22 @@ static int gil_stat(void) {
  * safepoint instead of finishing its quantum, so the 60 Hz vblank is not late by however many threads queued */
 static volatile long g_gil_urgent;
 static void gil_acquire_urgent(void) {
-    InterlockedExchange(&g_gil_urgent, 1);
+    redline_sync_store(&g_gil_urgent, 1);
     gil_acquire();
-    InterlockedExchange(&g_gil_urgent, 0);
+    redline_sync_store(&g_gil_urgent, 0);
 }
 
 void gil_acquire(void) {
-    LARGE_INTEGER asked;
-    if (gil_log()) QueryPerformanceCounter(&asked);
-    long ticket = InterlockedIncrement(&g_gil_next) - 1;
-    InterlockedIncrement(&g_gil_waiters);
-    for (long now; (now = g_gil_serving) != ticket;) WaitOnAddress(&g_gil_serving, &now, sizeof now, INFINITE);
-    InterlockedDecrement(&g_gil_waiters);
-    LARGE_INTEGER now;
-    QueryPerformanceCounter(&now);
-    g_gil_since = now.QuadPart;
+    uint64_t asked = gil_log() ? redline_sync_monotonic_ns() : 0;
+    int32_t ticket = redline_sync_fetch_add(&g_gil_next, 1);
+    redline_sync_fetch_add(&g_gil_waiters, 1);
+    while (redline_sync_load(&g_gil_serving) != ticket)
+        redline_sync_wait_i32(&g_gil_serving, redline_sync_load(&g_gil_serving), -1);
+    redline_sync_fetch_add(&g_gil_waiters, -1);
+    uint64_t now = redline_sync_monotonic_ns();
+    g_gil_since = now;
     if (gil_log()) {
-        LARGE_INTEGER f;
-        QueryPerformanceFrequency(&f);
-        double ms = (now.QuadPart - asked.QuadPart) * 1000.0 / f.QuadPart;
+        double ms = (double)(now - (uint64_t)asked.QuadPart) / 1000000.0;
         int i = gil_stat();
         g_gil_stat[i].waited += ms, g_gil_stat[i].n++;
         if (ms > g_gil_stat[i].worst_wait) g_gil_stat[i].worst_wait = ms;
@@ -101,16 +99,14 @@ void gil_acquire(void) {
 
 void gil_release(void) {
     if (gil_log()) {
-        LARGE_INTEGER now, f;
-        QueryPerformanceCounter(&now);
-        QueryPerformanceFrequency(&f);
+        uint64_t now = redline_sync_monotonic_ns();
         int i = gil_stat();
-        double ms = (now.QuadPart - g_gil_since) * 1000.0 / f.QuadPart;
+        double ms = (double)(now - g_gil_since) / 1000000.0;
         g_gil_stat[i].held += ms;
         if (ms > g_gil_stat[i].worst_hold) g_gil_stat[i].worst_hold = ms, g_gil_stat[i].worst_fn = t_ctx ? t_ctx->last_fn : 0;
         if (t_ctx) g_gil_stat[i].fn = t_ctx->last_fn;
-        if (!g_gil_window) g_gil_window = now.QuadPart;
-        double span = (now.QuadPart - g_gil_window) * 1000.0 / f.QuadPart;
+        if (!g_gil_window) g_gil_window = now;
+        double span = (double)(now - g_gil_window) / 1000000.0;
         if (span >= 2000) {
             double held = 0;
             int n = 0;
@@ -126,27 +122,22 @@ void gil_release(void) {
                         g_gil_stat[k].n ? g_gil_stat[k].waited / g_gil_stat[k].n : 0, g_gil_stat[k].worst_wait);
             fprintf(stderr, "\n");
             memset(g_gil_stat, 0, sizeof g_gil_stat);
-            g_gil_window = now.QuadPart;
+            g_gil_window = now;
         }
     }
-    InterlockedIncrement(&g_gil_serving);
-    WakeByAddressAll((void *)&g_gil_serving);
+    redline_sync_fetch_add(&g_gil_serving, 1);
+    redline_sync_wake_all(&g_gil_serving);
 }
 
 void gil_yield(void) {
-    LARGE_INTEGER now;
-    QueryPerformanceCounter(&now);
-    if (!g_gil_quantum) {
-        LARGE_INTEGER f;
-        QueryPerformanceFrequency(&f);
-        g_gil_quantum = f.QuadPart / 1000;
-    }
-    if (now.QuadPart - g_gil_since < g_gil_quantum && !g_gil_urgent) return;
+    uint64_t now = redline_sync_monotonic_ns();
+    if (!g_gil_quantum) g_gil_quantum = 1000000ull;
+    if (now - g_gil_since < g_gil_quantum && !redline_sync_load(&g_gil_urgent)) return;
     /* at DISPATCH_LEVEL or above nothing may preempt: not DPCs (vblank, flip queue) a thread's raised-IRQL code
      * guards against, nor threads in the middle of a DPC */
     if (t_ctx && M8(t_ctx->fs_base + 0x24) >= 2) {
-        static LONG told;
-        if (gil_log() && now.QuadPart - g_gil_since > 20 * g_gil_quantum && InterlockedIncrement(&told) <= 20)
+        static volatile int32_t told;
+        if (gil_log() && now - g_gil_since > 20 * g_gil_quantum && redline_sync_fetch_add(&told, 1) + 1 <= 20)
             fprintf(stderr, "[gil] thread %lu at IRQL %u keeps the lock %.0f ms in %08X\n", GetCurrentThreadId(),
                     M8(t_ctx->fs_base + 0x24), (double)(now.QuadPart - g_gil_since) / g_gil_quantum, t_ctx->last_fn);
         return;
@@ -220,10 +211,10 @@ uint32_t thread_env_init(X86Ctx *c, uint32_t stack_size, uint32_t tls_size) {
  * thread calls PsTerminateSystemThread. Caller holds the GIL. */
 /* every guest context, for the hang watchdog */
 static X86Ctx *g_contexts[64];
-static volatile LONG g_ncontexts;
+static volatile int32_t g_ncontexts;
 
-static LONG track(X86Ctx *c) {
-    LONG i = InterlockedIncrement(&g_ncontexts) - 1;
+static int32_t track(X86Ctx *c) {
+    int32_t i = redline_sync_fetch_add(&g_ncontexts, 1);
     if (i < 64) g_contexts[i] = c;
     return i;
 }
@@ -319,7 +310,7 @@ void watchdog_start(void) {
 
 static void run_guest(X86Ctx *c, uint32_t target) {
     t_ctx = c;
-    LONG slot = track(c);
+    int32_t slot = track(c);
     jmp_buf jb;
     jmp_buf *outer = t_exit;
     t_exit = &jb;
