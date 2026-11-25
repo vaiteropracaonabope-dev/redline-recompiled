@@ -25,7 +25,7 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Add a scalar ARM64 MMX implementation in `runtime/x86.h`, retaining the SSE2 implementation for x64 and the independent scalar reference/self-test in `runtime/runtime.c`.
 - [x] Cross-compile the ARM64 CPU compatibility test with Android NDK 27.2.12479018; GitHub Actions run 45518316795 completed successfully.
 - [x] Run native ARM64 runtime assertions for packed-float arithmetic, MINPS/MAXPS edge semantics, and selected MMX operations; GitHub Actions run 45518666662 passed this native ARM64 job.
-- [ ] Expand MMX differential coverage against the independent reference used by the Windows runtime; current Android test checks selected known-answer cases, not every MMX opcode.
+- [ ] Run expanded MMX differential coverage on native ARM64. The test now compares every MMX opcode against a separate scalar oracle over 8×8 edge combinations and deterministic pseudo-random inputs; GitHub Actions result pending.
 - [ ] Design the remaining platform abstraction boundaries before replacing platform APIs.
 - [ ] Add an Android NDK/Gradle skeleton only after the native entry points and graphics strategy are known.
 - [ ] Port and test one subsystem at a time: startup/filesystem, input, audio, graphics, then game runtime.
