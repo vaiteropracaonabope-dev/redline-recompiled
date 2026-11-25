@@ -13,6 +13,7 @@
 
 #include "xbox.h"
 #include "host_sync.h"
+#include "host_thread.h"
 
 #define STATUS_SUCCESS 0x00000000u
 #define NT_CURRENT_THREAD 0xFFFFFFFEu
@@ -284,7 +285,7 @@ static void hang_report(void) {
     fflush(stderr);
 }
 
-static DWORD WINAPI watchdog_proc(void *p) {
+static void watchdog_proc(void *p) {
     thread_name("watchdog");
     ULONGLONG due = p ? (redline_sync_monotonic_ns() / 1000000ull) + 1000ull * (uintptr_t)p : ~0ull;
     for (;;) {
@@ -307,7 +308,11 @@ static DWORD WINAPI watchdog_proc(void *p) {
 
 void watchdog_start(void) {
     const char *s = getenv("HANGDUMP");
-    CreateThread(NULL, 0, watchdog_proc, (void *)(uintptr_t)(s && atoi(s) > 0 ? atoi(s) : 0), 0, NULL);
+    uint32_t tid = 0;
+    RedlineThreadToken token = 0;
+    if (!redline_thread_create(watchdog_proc, (void *)(uintptr_t)(s && atoi(s) > 0 ? atoi(s) : 0),
+                               0, 0, &tid, &token))
+        fprintf(stderr, "cannot start watchdog thread\\n");
 }
 
 static void run_guest(X86Ctx *c, uint32_t target) {
@@ -354,7 +359,7 @@ void thread_name(const char *fmt, ...) {
     set(GetCurrentThread(), w);
 }
 
-static DWORD WINAPI thread_proc(void *p) {
+static void thread_proc(void *p) {
     ThreadStart *ts = p;
     thread_name("guest %08X", ts->start_routine);
     X86Ctx *c = &ts->ctx;
@@ -372,6 +377,25 @@ static DWORD WINAPI thread_proc(void *p) {
     run_guest(c, target);
     gil_release();
     free(ts);
+}
+
+typedef struct { uint32_t guest_thread; RedlineThreadToken token; } GuestHostThread;
+static GuestHostThread g_guest_host_threads[64];
+static int remember_host_thread(uint32_t guest_thread, RedlineThreadToken token) {
+    for (int i = 0; i < 64; ++i) if (!g_guest_host_threads[i].guest_thread) {
+        g_guest_host_threads[i].guest_thread = guest_thread;
+        g_guest_host_threads[i].token = token;
+        return 1;
+    }
+    return 0;
+}
+static RedlineThreadToken take_host_thread(uint32_t guest_thread) {
+    for (int i = 0; i < 64; ++i) if (g_guest_host_threads[i].guest_thread == guest_thread) {
+        RedlineThreadToken token = g_guest_host_threads[i].token;
+        g_guest_host_threads[i].guest_thread = 0;
+        g_guest_host_threads[i].token = 0;
+        return token;
+    }
     return 0;
 }
 
@@ -384,13 +408,17 @@ static uint32_t k_PsCreateSystemThreadEx(X86Ctx *c, const uint32_t *a) {
     ts->start_routine = a[5];
     ts->start_context = a[6];
     ts->system_routine = a[9];
-    DWORD tid;
-    HANDLE h = CreateThread(NULL, 1 << 20, thread_proc, ts, (uint8_t)a[7] ? CREATE_SUSPENDED : 0, &tid);
-    if (!h) {
-        fprintf(stderr, "CreateThread failed\n");
+    uint32_t tid = 0;
+    RedlineThreadToken token = 0;
+    if (!redline_thread_create(thread_proc, ts, 1 << 20, (uint8_t)a[7] != 0, &tid, &token)) {
+        fprintf(stderr, "host thread creation failed\\n");
+        free(ts);
         fatal_exit(1);
     }
-    M32(thread + 0x1F0) = (uint32_t)(uintptr_t)h; /* host handle stashed in an unused KTHREAD tail slot */
+    if (token && !remember_host_thread(thread, token)) {
+        fprintf(stderr, "too many suspended guest threads\\n");
+        fatal_exit(1);
+    }
     if (a[0]) M32(a[0]) = thread;
     if (a[4]) M32(a[4]) = tid;
     fprintf(stderr, "[thread] created %08X start=%08X ctx=%08X sys=%08X%s\n", thread, a[5], a[6], a[9],
@@ -404,8 +432,8 @@ static uint32_t k_PsTerminateSystemThread(X86Ctx *c, const uint32_t *a) {
 }
 
 static uint32_t k_NtResumeThread(X86Ctx *c, const uint32_t *a) {
-    HANDLE h = (HANDLE)(uintptr_t)M32(handle_obj(c, a[0]) + 0x1F0);
-    DWORD prev = h ? ResumeThread(h) : 0;
+    RedlineThreadToken token = take_host_thread(handle_obj(c, a[0]));
+    uint32_t prev = redline_thread_resume(token);
     if (a[1]) M32(a[1]) = prev;
     return STATUS_SUCCESS;
 }
@@ -723,7 +751,7 @@ void dpc_kick(void) {
     if (g_dpc_kick) SetEvent(g_dpc_kick);
 }
 
-static DWORD WINAPI dpc_proc(void *p) {
+static void dpc_proc(void *p) {
     thread_name("vblank / DPC");
     t_ctx = &g_dpc_ctx;
     g_dpc_tid = GetCurrentThreadId();
@@ -804,8 +832,10 @@ static DWORD WINAPI dpc_proc(void *p) {
 void dpc_start(void) {
     thread_env_init(&g_dpc_ctx, 64 * 1024, 0);
     M8(g_dpc_ctx.fs_base + 0x24) = 2; /* DISPATCH_LEVEL */
-    if (!CreateThread(NULL, 1 << 20, dpc_proc, NULL, 0, NULL)) {
-        fprintf(stderr, "cannot start DPC thread\n");
+    uint32_t tid = 0;
+    RedlineThreadToken token = 0;
+    if (!redline_thread_create(dpc_proc, NULL, 1 << 20, 0, &tid, &token)) {
+        fprintf(stderr, "cannot start DPC thread\\n");
         fatal_exit(1);
     }
 }
