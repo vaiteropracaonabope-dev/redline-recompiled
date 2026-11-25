@@ -46,6 +46,16 @@ static void test_stale_generation_after_slot_reuse(void) {
     assert(redline_guest_handle_lookup(&table, current, 0, &object) && object == 0xB0004000u);
 }
 
+static void test_special_namespace_is_reserved(void) {
+    RedlineGuestHandleTable table;
+    uint32_t handle = 0, object = 0;
+    redline_guest_handles_init(&table);
+    table.entries[0].generation = 0x4C000u;
+    assert(redline_guest_handle_insert(&table, 0xB0005000u, 1, &handle));
+    assert((handle & REDLINE_GUEST_HANDLE_SPECIAL_MASK) != REDLINE_GUEST_HANDLE_SYMLINK_TAG);
+    assert(!redline_guest_handle_lookup(&table, REDLINE_GUEST_HANDLE_SYMLINK_TAG | 1u, 0, &object));
+}
+
 static void test_capacity_and_invalid_inputs(void) {
     static RedlineGuestHandleTable table;
     uint32_t handles[REDLINE_GUEST_HANDLE_CAPACITY], object = 0;
@@ -66,6 +76,7 @@ int main(void) {
     test_insert_lookup_and_type();
     test_duplicate_and_close();
     test_stale_generation_after_slot_reuse();
+    test_special_namespace_is_reserved();
     test_capacity_and_invalid_inputs();
     puts("generation-tagged guest handle table tests passed");
     return 0;
