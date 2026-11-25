@@ -102,4 +102,6 @@ The current build script, `tools/build.py`, invokes the Microsoft Visual C++ too
 - [x] Confirm workflow run 45523656707: Windows host synchronization link/test, `thread.c` MSVC compile, ARM64 native tests, and Android NDK header check all passed.
 - [x] Route the guest lock (GIL) ticket counters, waiter count, wakeups, urgent handoff, and 1 ms scheduling quantum through `host_sync`; GIL timing now uses the portable monotonic nanosecond clock.
 - [x] Route `thread.c` sleep/yield calls, guest wait-object polling, and relative/absolute timeout clock calculations through `host_sync`; GIL and DPC scheduling clocks now use the portable monotonic clock.
-- [ ] Continue migrating `runtime/thread.c`: host thread creation, suspended/resume behavior, events, waitable timers, thread naming/priority, and native event signaling still use Win32 APIs. The file is not yet Android-buildable.
+- [x] Add `host_thread.h` with POSIX and Windows backends for detached thread creation and one-shot suspended-thread resume.
+- [x] Route guest thread creation/resume, watchdog creation, and DPC thread creation through `host_thread`; keep host thread tokens outside 32-bit guest KTHREAD memory to avoid pointer truncation.
+- [ ] Continue migrating `runtime/thread.c`: event objects/kicks, waitable timers, thread naming/priority, and native event signaling still use Win32 APIs. The file is not yet Android-buildable.
