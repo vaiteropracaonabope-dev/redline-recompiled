@@ -466,6 +466,13 @@ static uint32_t k_NtOpenFile(X86Ctx *c, const uint32_t *a) {
     return open_file(c, a[0], a[1], a[2], a[3], 1 /* FILE_OPEN */, a[5]);
 }
 
+/* Symbolic-link handles use a legacy tagged index rather than FILE_OBJECTs. They own no host resource. */
+int file_close_special_handle(uint32_t handle) {
+    if ((handle & 0xFFFF0000u) != 0x4C000000u) return 0;
+    uint32_t index = handle & 0xFFFFu;
+    return index >= 1 && index <= MAX_LINKS;
+}
+
 int file_close(uint32_t handle) {
     HFile *f = file_of(handle);
     if (!f) return 0;
