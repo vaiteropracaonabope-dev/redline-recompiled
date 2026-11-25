@@ -86,6 +86,8 @@ int redline_fs_stat(const char *path, RedlineFsInfo *info) {
     }
     if (stat(path, &st)) return -1;
     info->size = (uint64_t)st.st_size;
+    info->created_seconds = 0; /* portable POSIX stat has no creation/birth timestamp */
+    info->accessed_seconds = (int64_t)st.st_atime;
     info->modified_seconds = (int64_t)st.st_mtime;
 #if defined(__APPLE__)
     info->modified_nanoseconds = (uint32_t)st.st_mtimespec.tv_nsec;
@@ -95,6 +97,27 @@ int redline_fs_stat(const char *path, RedlineFsInfo *info) {
     info->mode = (uint32_t)st.st_mode;
     info->is_directory = S_ISDIR(st.st_mode);
     return 0;
+}
+
+int redline_fs_set_times(RedlineFsHandle handle, const RedlineFsTime *created,
+                         const RedlineFsTime *accessed, const RedlineFsTime *modified) {
+    struct timespec times[2];
+    (void)created; /* POSIX does not provide a portable birth-time setter. */
+    if (accessed) {
+        times[0].tv_sec = (time_t)accessed->seconds;
+        times[0].tv_nsec = accessed->nanoseconds;
+    } else {
+        times[0].tv_sec = 0;
+        times[0].tv_nsec = UTIME_OMIT;
+    }
+    if (modified) {
+        times[1].tv_sec = (time_t)modified->seconds;
+        times[1].tv_nsec = modified->nanoseconds;
+    } else {
+        times[1].tv_sec = 0;
+        times[1].tv_nsec = UTIME_OMIT;
+    }
+    return futimens((int)handle, times);
 }
 
 int redline_fs_mkdir(const char *path, unsigned mode) {
