@@ -36,26 +36,29 @@ int32_t redline_sync_fetch_add(volatile int32_t *value, int32_t amount) {
 int32_t redline_sync_exchange(volatile int32_t *value, int32_t desired) {
     return __atomic_exchange_n(value, desired, __ATOMIC_SEQ_CST);
 }
-int redline_sync_wait_i32(const volatile int32_t *value, int32_t expected, int timeout_ms) {
+int redline_sync_wait_i32_ns(const volatile int32_t *value, int32_t expected, int64_t timeout_ns) {
     pthread_once(&g_wait_once, init_wait_buckets);
     WaitBucket *bucket = bucket_for(value);
     struct timespec deadline = {0, 0};
-    if (timeout_ms >= 0) {
+    if (timeout_ns >= 0) {
         clock_gettime(CLOCK_REALTIME, &deadline);
-        deadline.tv_sec += timeout_ms / 1000;
-        deadline.tv_nsec += (long)(timeout_ms % 1000) * 1000000L;
+        deadline.tv_sec += (time_t)(timeout_ns / 1000000000ll);
+        deadline.tv_nsec += (long)(timeout_ns % 1000000000ll);
         if (deadline.tv_nsec >= 1000000000L) deadline.tv_sec++, deadline.tv_nsec -= 1000000000L;
     }
     pthread_mutex_lock(&bucket->mutex);
     int result = 1;
     while (redline_sync_load(value) == expected) {
-        int rc = timeout_ms < 0 ? pthread_cond_wait(&bucket->condition, &bucket->mutex)
+        int rc = timeout_ns < 0 ? pthread_cond_wait(&bucket->condition, &bucket->mutex)
                                 : pthread_cond_timedwait(&bucket->condition, &bucket->mutex, &deadline);
         if (rc == ETIMEDOUT) { result = 0; break; }
         if (rc != 0) { result = -1; break; }
     }
     pthread_mutex_unlock(&bucket->mutex);
     return result;
+}
+int redline_sync_wait_i32(const volatile int32_t *value, int32_t expected, int timeout_ms) {
+    return redline_sync_wait_i32_ns(value, expected, timeout_ms < 0 ? -1 : (int64_t)timeout_ms * 1000000ll);
 }
 void redline_sync_wake_all(const volatile int32_t *value) {
     pthread_once(&g_wait_once, init_wait_buckets);
