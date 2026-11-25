@@ -776,6 +776,7 @@ static uint32_t k_NtQueryVolumeInformationFile(X86Ctx *c, const uint32_t *a) {
 }
 
 static uint32_t k_IoQueryVolumeInformation(X86Ctx *c, const uint32_t *a) {
+    (void)c;
     /* (FileObject, FsInformationClass, Length, FsInformation, *ReturnedLength): this API receives an object pointer. */
     static uint32_t iosb_va;
     if (!iosb_va) iosb_va = kernel_alloc(8);
