@@ -26,6 +26,7 @@ jobs:
           "$CC" -std=c11 -Wall -Wextra -Werror -Iruntime -fsyntax-only tests/arm64_cpu_compile.c
           "$CC" -std=c11 -Wall -Wextra -Werror -Iruntime -fsyntax-only runtime/host_fs_posix.c tests/host_fs_posix.c
           "$CC" -std=c11 -Wall -Wextra -Werror -Iruntime -fsyntax-only runtime/file.c
+          "$CC" -std=c11 -Wall -Wextra -Werror -Iruntime -fsyntax-only runtime/host_sync_posix.c tests/host_sync_posix.c
 
   arm64-runtime-check:
     runs-on: ubuntu-24.04-arm
@@ -34,11 +35,14 @@ jobs:
       - name: Compile ARM64 CPU runtime test
         run: |
           cc -std=c11 -O2 -Wall -Wextra -Werror -Iruntime tests/arm64_cpu_compile.c -o /tmp/arm64-cpu-test
-          cc -std=c11 -O2 -Wall -Wextra -Werror -Iruntime runtime/host_fs_posix.c tests/host_fs_posix.c -o /tmp/host-fs-test
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pthread -Iruntime runtime/host_fs_posix.c tests/host_fs_posix.c -o /tmp/host-fs-test
+          cc -std=c11 -O2 -Wall -Wextra -Werror -pthread -Iruntime runtime/host_sync_posix.c tests/host_sync_posix.c -o /tmp/host-sync-test
       - name: Run ARM64 CPU runtime test
         run: /tmp/arm64-cpu-test
       - name: Run POSIX filesystem test
         run: /tmp/host-fs-test
+      - name: Run POSIX synchronization test
+        run: /tmp/host-sync-test
 
   windows-backend-check:
     runs-on: windows-latest
