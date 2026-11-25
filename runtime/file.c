@@ -238,9 +238,9 @@ static int host_path(const char *guest, char *out) {
     } else if (parsed.device == REDLINE_XBOX_PATH_PARTITION) {
         char dir[MAX_PATH];
         snprintf(dir, sizeof dir, "%s\\..\\hdd", root);
-        CreateDirectoryA(dir, NULL); /* hdd\PartitionN is created next to the game folder on first use */
+        (void)redline_fs_mkdir(dir, 0777); /* hdd\\PartitionN is created next to the game folder on first use */
         snprintf(dir + strlen(dir), sizeof dir - strlen(dir), "\\Partition%u", parsed.partition);
-        CreateDirectoryA(dir, NULL);
+        (void)redline_fs_mkdir(dir, 0777);
         snprintf(out, MAX_PATH, "%s%s", dir, parsed.suffix);
         dev = 2;
     } else {
@@ -470,18 +470,24 @@ static int partition_of(const HFile *f);
 
 /* delete everything in a folder: a cache partition the title formats */
 static void empty_dir(const char *dir) {
-    char p[MAX_PATH];
-    WIN32_FIND_DATAA d;
-    snprintf(p, sizeof p, "%s\\*", dir);
-    HANDLE h = FindFirstFileA(p, &d);
-    if (h == INVALID_HANDLE_VALUE) return;
-    do {
-        if (!strcmp(d.cFileName, ".") || !strcmp(d.cFileName, "..")) continue;
-        snprintf(p, sizeof p, "%s\\%s", dir, d.cFileName);
-        if (d.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) empty_dir(p), RemoveDirectoryA(p);
-        else DeleteFileA(p);
-    } while (FindNextFileA(h, &d));
-    FindClose(h);
+    RedlineFsDirHandle h = redline_fs_dir_open(dir);
+    RedlineFsDirEntry entry;
+    int next;
+    if (!h) return;
+    while ((next = redline_fs_dir_read(h, &entry)) > 0) {
+        if (!strcmp(entry.name, ".") || !strcmp(entry.name, "..")) continue;
+        char path[MAX_PATH];
+        int n = snprintf(path, sizeof path, "%s/%s", dir, entry.name);
+        if (n < 0 || (size_t)n >= sizeof path) continue;
+        RedlineFsInfo info;
+        if (!redline_fs_stat(path, &info) && info.is_directory) {
+            empty_dir(path);
+            (void)redline_fs_rmdir(path);
+        } else {
+            (void)redline_fs_unlink(path);
+        }
+    }
+    redline_fs_dir_close(h);
 }
 
 static uint32_t rw(X86Ctx *c, const uint32_t *a, int write) {
@@ -636,7 +642,8 @@ static uint32_t k_NtSetInformationFile(X86Ctx *c, const uint32_t *a) {
     case 13: /* FileDispositionInformation: delete when closed */
         if (M8(a[2])) {
             if (f->h != (RedlineFsHandle)-1) { redline_fs_close(f->h); f->h = (RedlineFsHandle)-1; }
-            if (f->is_dir ? !RemoveDirectoryA(f->host) : !DeleteFileA(f->host)) return status_from_win32(GetLastError());
+            int delete_result = f->is_dir ? redline_fs_rmdir(f->host) : redline_fs_unlink(f->host);
+            if (delete_result) return status_from_errno(errno);
         }
         break;
     default:
@@ -775,9 +782,10 @@ static uint32_t k_NtDeleteFile(X86Ctx *c, const uint32_t *a) {
     char guest[GPATH], host[MAX_PATH];
     guest_path(a[0], guest);
     if (!host_path(guest, host)) return STATUS_OBJECT_PATH_NOT_FOUND;
-    DWORD attr = GetFileAttributesA(host);
-    BOOL ok = attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) ? RemoveDirectoryA(host) : DeleteFileA(host);
-    return ok ? STATUS_SUCCESS : status_from_win32(GetLastError());
+    RedlineFsInfo info;
+    if (redline_fs_stat(host, &info)) return status_from_errno(errno);
+    int result = info.is_directory ? redline_fs_rmdir(host) : redline_fs_unlink(host);
+    return result ? status_from_errno(errno) : STATUS_SUCCESS;
 }
 
 /* ---------------- volume control ---------------- */
