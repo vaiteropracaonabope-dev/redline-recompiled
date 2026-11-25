@@ -47,6 +47,7 @@ int64_t redline_fs_pwrite(RedlineFsHandle handle, const void *buffer, size_t byt
 int64_t redline_fs_seek(RedlineFsHandle handle, int64_t offset, int whence);
 int redline_fs_truncate(RedlineFsHandle handle, uint64_t size);
 int redline_fs_sync(RedlineFsHandle handle);
+uint64_t redline_fs_monotonic_ns(void);
 int redline_fs_stat(const char *path, RedlineFsInfo *info);
 int redline_fs_set_times(RedlineFsHandle handle, const RedlineFsTime *created,
                          const RedlineFsTime *accessed, const RedlineFsTime *modified);
