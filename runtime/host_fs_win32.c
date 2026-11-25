@@ -204,7 +204,7 @@ int redline_fs_dir_read(RedlineFsDirHandle handle, RedlineFsDirEntry *entry) {
         return -1;
     }
     if (strlen(dir->data.cFileName) >= sizeof entry->name) { errno = ENAMETOOLONG; return -1; }
-    strcpy(entry->name, dir->data.cFileName);
+    memcpy(entry->name, dir->data.cFileName, strlen(dir->data.cFileName) + 1);
     entry->is_directory = !!(dir->data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY);
     return 1;
 }
