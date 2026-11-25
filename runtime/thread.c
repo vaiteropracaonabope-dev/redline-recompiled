@@ -35,7 +35,9 @@ THREAD_LOCAL X86Ctx *t_ctx; /* this host thread's guest context, for crash repor
  * winning the lock straight back. Waiters sleep on the "now serving" counter with WaitOnAddress. A holder
  * yields only after a 1 ms quantum: handing over at every back-edge made a polling thread and a busy one
  * trade the lock millions of times a second, each a host thread switch. */
+#ifdef _WIN32
 #pragma comment(lib, "synchronization.lib")
+#endif
 static volatile int32_t g_gil_next, g_gil_serving;
 volatile int32_t g_gil_waiters;
 static uint64_t g_gil_since, g_gil_quantum; /* monotonic nanoseconds; 1 ms quantum */
